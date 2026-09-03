@@ -1,1 +1,1 @@
-# GUI-Paket für Tonuino SD-Manager
+# GUI-Paket für Tonuino-Manager

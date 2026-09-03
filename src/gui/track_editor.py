@@ -1,5 +1,5 @@
 """
-Track-Editor Dialog fuer Tonuino SD-Manager
+Track-Editor Dialog fuer Tonuino-Manager
 """
 
 from PyQt6.QtWidgets import (

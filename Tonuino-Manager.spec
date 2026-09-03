@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller Spec-Datei fuer Tonuino SD-Manager
+PyInstaller Spec-Datei fuer Tonuino-Manager
 """
 
 import imageio_ffmpeg
@@ -47,7 +47,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='TonuinoSDManager',
+    name='Tonuino-Manager',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -60,4 +60,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='src/resources/icon.ico',
 )

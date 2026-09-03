@@ -167,6 +167,25 @@ class MetadataManager:
             print(f"Fehler beim Schreiben der Metadaten: {e}")
             return False
 
+    def get_cover_bytes(self, filepath: str) -> Optional[bytes]:
+        """Gibt die rohen Cover-Bilddaten (APIC) einer MP3-Datei zurueck, falls vorhanden"""
+        if not self._mutagen_available:
+            return None
+
+        try:
+            audio = self._open_mp3(filepath)
+
+            if audio.tags:
+                for key in audio.tags.keys():
+                    if key.startswith('APIC'):
+                        return audio.tags[key].data
+
+            return None
+
+        except Exception as e:
+            print(f"Fehler beim Lesen des Covers: {e}")
+            return None
+
     def extract_cover(self, filepath: str, output_path: str) -> bool:
         """Extrahiert das Cover aus einer MP3-Datei"""
         if not self._mutagen_available:

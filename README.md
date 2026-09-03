@@ -1,4 +1,4 @@
-# Tonuino SD-Manager
+# Tonuino-Manager
 
 Ein hübsches Windows-Tool zum Verwalten von Tonuio SD-Karten und RFID-Karten.
 

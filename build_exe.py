@@ -1,5 +1,5 @@
 """
-Build-Skript fuer Tonuino SD-Manager
+Build-Skript fuer Tonuino-Manager
 Erstellt eine standalone .exe Datei mit PyInstaller
 """
 
@@ -28,7 +28,7 @@ def create_exe():
     """Erstellt die EXE mit PyInstaller"""
     
     # Spec-Datei verwenden
-    spec_file = "TonuinoSDManager.spec"
+    spec_file = "Tonuino-Manager.spec"
     
     args = [
         sys.executable, "-m", "PyInstaller",
@@ -46,7 +46,7 @@ def create_exe():
         print("\n" + "="*50)
         print("ERFOLG! EXE-Datei erstellt.")
         print("="*50)
-        print("\nDie EXE-Datei befindet sich in: dist/TonuinoSDManager.exe")
+        print("\nDie EXE-Datei befindet sich in: dist/Tonuino-Manager.exe")
     else:
         print("\nFEHLER beim Erstellen der EXE-Datei!")
         sys.exit(1)
@@ -70,7 +70,7 @@ def copy_additional_files():
 
 if __name__ == "__main__":
     print("="*50)
-    print("  Tonuino SD-Manager - Build")
+    print("  Tonuino-Manager - Build")
     print("="*50)
     print()
     
@@ -88,4 +88,4 @@ if __name__ == "__main__":
     print("Build abgeschlossen!")
     print("="*50)
     print("\nDu findest die EXE-Datei im 'dist'-Ordner.")
-    print("Starte sie mit: dist/TonuinoSDManager.exe")
+    print("Starte sie mit: dist/Tonuino-Manager.exe")
