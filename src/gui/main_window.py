@@ -25,12 +25,31 @@ from core.tonuino_config import TonuinoConfigManager
 
 def resource_path(*parts) -> str:
     """Ermittelt einen Pfad relativ zum src-Verzeichnis - funktioniert sowohl im
-    Skript- als auch im PyInstaller-EXE-Modus (siehe auch main.py)."""
+    Skript- als auch im PyInstaller-EXE-Modus (siehe auch main.py).
+    Im (onefile-)EXE-Modus liegen gebuendelte Daten unter sys._MEIPASS, nicht
+    neben der EXE-Datei."""
     if getattr(sys, 'frozen', False):
-        src_dir = os.path.join(os.path.dirname(sys.executable), 'src')
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        src_dir = os.path.join(base_dir, 'src')
     else:
         src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(src_dir, *parts)
+
+
+def confirm_action(parent, title: str, text: str, default_no: bool = True) -> bool:
+    """Zeigt einen Ja/Nein-Bestaetigungsdialog mit deutschen Buttons.
+    Qt uebersetzt die Standard-Yes/No-Buttons von QMessageBox.question() nicht
+    automatisch ins Deutsche (haengt von geladenen Qt-Uebersetzungsdateien ab),
+    daher werden hier explizit deutsch beschriftete Buttons verwendet."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(title)
+    box.setText(text)
+    btn_yes = box.addButton("Ja", QMessageBox.ButtonRole.YesRole)
+    btn_no = box.addButton("Nein", QMessageBox.ButtonRole.NoRole)
+    box.setDefaultButton(btn_no if default_no else btn_yes)
+    box.exec()
+    return box.clickedButton() == btn_yes
 
 
 class ClickableLabel(QLabel):
@@ -161,6 +180,7 @@ class MainWindow(QMainWindow):
         self.config_manager: TonuinoConfigManager = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
+        self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
 
         self._setup_ui()
         self._setup_statusbar()
@@ -188,7 +208,6 @@ class MainWindow(QMainWindow):
         # Ersten Reader automatisch verbinden
         if self.rfid_reader.connect(0):
             self._set_status_icon(self.reader_icon, "ok")
-            self.btn_program_card.setEnabled(False)
             self._update_card_status(present=False)
         else:
             self._set_status_icon(self.reader_icon, "error")
@@ -589,6 +608,8 @@ class MainWindow(QMainWindow):
         if self.current_folder:
             self._show_folder(self.current_folder)
 
+        self._update_program_buttons()
+
     def _select_folder_in_list(self, folder_index: int):
         """Waehlt einen Ordner in der Sidebar-Liste aus und zeigt ihn im Hauptbereich an
         (z.B. direkt nach dem Anlegen eines neuen Ordners)"""
@@ -704,16 +725,14 @@ class MainWindow(QMainWindow):
         folder = self.current_folder
         name = self._resolve_folder_name(folder)
 
-        reply = QMessageBox.question(
+        confirmed = confirm_action(
             self,
             "Ordner löschen",
             f"Soll der Ordner '{name}' (Ordner {folder.index:02d}) mit allen "
             f"{folder.track_count} Track(s) unwiderruflich von der SD-Karte "
-            f"gelöscht werden?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            f"gelöscht werden?"
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not confirmed:
             return
 
         try:
@@ -722,6 +741,7 @@ class MainWindow(QMainWindow):
             self.current_folder = None
             self.stack.setCurrentWidget(self.welcome_widget)
             self._populate_folder_list()
+            self._update_program_buttons()
             self.status_bar.showMessage(f"Ordner {folder.index:02d} gelöscht")
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
@@ -900,14 +920,7 @@ class MainWindow(QMainWindow):
         else:
             message = f"Sollen die {len(tracks)} ausgewählten Tracks unwiderruflich gelöscht werden?"
 
-        reply = QMessageBox.question(
-            self,
-            "Tracks löschen",
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not confirm_action(self, "Tracks löschen", message):
             return
 
         try:
@@ -947,13 +960,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
 
+    def _update_program_buttons(self):
+        """Schaltet die Programmier-Buttons je nach Kartenstatus UND (fuer
+        'Karte programmieren' zusaetzlich) ausgewaehltem Ordner frei/aus.
+        Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon."""
+        self.btn_program_admin.setEnabled(self._rfid_card_present)
+        self.btn_program_card.setEnabled(self._rfid_card_present and self.current_folder is not None)
+
     def _update_card_status(self, present: bool):
         """Setzt Karten- und Programmiert-Icon auf den 'keine Karte'-Zustand zurueck"""
         if not present:
             self._set_status_icon(self.card_icon, "neutral")
             self._set_status_icon(self.programmed_icon, "neutral")
-            self.btn_program_card.setEnabled(False)
-            self.btn_program_admin.setEnabled(False)
+            self._rfid_card_present = False
+            self._update_program_buttons()
 
     def _check_rfid_card(self):
         """Prueft periodisch Reader- und Kartenstatus und aktualisiert die Anzeige automatisch"""
@@ -975,6 +995,15 @@ class MainWindow(QMainWindow):
                 pass
             return
 
+        # Reader war verbunden - pruefen ob er noch physisch angeschlossen ist
+        # (z.B. nicht per USB abgezogen wurde). Das ist unabhaengig davon, ob
+        # gerade eine Karte aufliegt.
+        if not self.rfid_reader.is_reader_present():
+            self.rfid_reader.disconnect()
+            self._set_status_icon(self.reader_icon, "neutral")
+            self._update_card_status(present=False)
+            return
+
         # Reader verbunden - Karte pruefen
         try:
             if not self.rfid_reader.is_card_present():
@@ -985,13 +1014,13 @@ class MainWindow(QMainWindow):
             if not uid:
                 self._set_status_icon(self.card_icon, "warning")
                 self._set_status_icon(self.programmed_icon, "neutral")
-                self.btn_program_card.setEnabled(False)
-                self.btn_program_admin.setEnabled(False)
+                self._rfid_card_present = False
+                self._update_program_buttons()
                 return
 
             self._set_status_icon(self.card_icon, "ok")
-            self.btn_program_card.setEnabled(True)
-            self.btn_program_admin.setEnabled(True)
+            self._rfid_card_present = True
+            self._update_program_buttons()
 
             card_data = self.rfid_reader.read_tonuino_card()
             if card_data:
@@ -1057,15 +1086,15 @@ class MainWindow(QMainWindow):
             if not ok:
                 return
 
-        reply = QMessageBox.question(
+        confirmed = confirm_action(
             self,
             "Karte programmieren",
             f"Soll die Karte fuer Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
             f"programmiert werden?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            default_no=False
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
+        if confirmed:
             try:
                 success = self.rfid_reader.write_tonuino_card(
                     self.current_folder.index,
@@ -1102,16 +1131,16 @@ class MainWindow(QMainWindow):
             )
             return
 
-        reply = QMessageBox.question(
+        confirmed = confirm_action(
             self,
             "Admin-Karte programmieren",
             "Soll diese Karte als Admin-Karte programmiert werden?\n\n"
             "Eine Admin-Karte ist keinem Ordner zugeordnet und oeffnet am "
             "TonUINO das Admin-Menue.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            default_no=False
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
+        if confirmed:
             try:
                 success = self.rfid_reader.write_admin_card()
                 if success:

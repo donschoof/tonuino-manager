@@ -150,6 +150,16 @@ class RFIDReader:
                 pass
         self._card = None
         self._reader_available = False
+
+    def is_reader_present(self) -> bool:
+        """Prueft ob der verbundene Reader noch physisch vorhanden ist (z.B. nicht
+        per USB abgezogen wurde) - unabhaengig davon, ob gerade eine Karte aufliegt.
+        Im Gegensatz zu is_card_present(), das nur Kommunikationsfehler mit einer
+        (fehlenden) Karte behandelt, fragt dies den aktuellen PC/SC-Reader-Status
+        direkt beim Betriebssystem ab."""
+        if not self._reader_available or not getattr(self, '_reader', None):
+            return False
+        return str(self._reader) in self.get_readers()
     
     def is_card_present(self) -> bool:
         """Prueft ob eine Karte auf dem Reader liegt.
