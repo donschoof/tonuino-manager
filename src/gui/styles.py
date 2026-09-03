@@ -64,6 +64,12 @@ QPushButton#primaryButton:hover {
     background-color: #b4d0fb;
 }
 
+QPushButton#primaryButton:disabled {
+    background-color: #1e1e2e;
+    color: #585b70;
+    border-color: #313244;
+}
+
 QPushButton#dangerButton {
     background-color: #f38ba8;
     color: #1e1e2e;
@@ -74,10 +80,22 @@ QPushButton#dangerButton:hover {
     background-color: #f5a0b8;
 }
 
+QPushButton#dangerButton:disabled {
+    background-color: #1e1e2e;
+    color: #585b70;
+    border-color: #313244;
+}
+
 QPushButton#successButton {
     background-color: #a6e3a1;
     color: #1e1e2e;
     border-color: #a6e3a1;
+}
+
+QPushButton#successButton:disabled {
+    background-color: #1e1e2e;
+    color: #585b70;
+    border-color: #313244;
 }
 
 /* === List Widgets === */

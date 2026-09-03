@@ -8,9 +8,11 @@ import os
 
 # PyInstaller-Kompatibilitaet
 if getattr(sys, 'frozen', False):
-    # Lauft als kompilierte EXE
-    script_dir = os.path.dirname(sys.executable)
-    src_dir = os.path.join(script_dir, 'src')
+    # Lauft als kompilierte EXE (onefile-Build, siehe Tonuino-Manager.spec).
+    # Gebuendelte Daten (datas=[('src', 'src')]) werden zur Laufzeit nach
+    # sys._MEIPASS entpackt - NICHT neben die EXE-Datei selbst.
+    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    src_dir = os.path.join(base_dir, 'src')
 else:
     # Lauft als Python-Skript
     script_dir = os.path.dirname(os.path.abspath(__file__))

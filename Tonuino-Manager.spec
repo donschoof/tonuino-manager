@@ -12,21 +12,26 @@ block_cipher = None
 # Paketstruktur, damit imageio_ffmpeg.get_ffmpeg_exe() es zur Laufzeit wiederfindet.
 _ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
+# WICHTIG: 'src' steht in pathex, NICHT nur in datas. main.py importiert
+# "from gui.main_window import MainWindow" erst nach einem sys.path-Trick zur
+# Laufzeit - ohne pathex wuerde PyInstallers statische Analyse diesen Import
+# nie aufloesen und dadurch auch nie in gui/core hineinschauen. Die Folge waere,
+# dass saemtliche dortigen Importe (PIL, mutagen, smartcard, sogar
+# Standardbibliotheks-Module wie configparser) im Build fehlen, da sie nirgends
+# im Analyse-Graph auftauchen. Mit pathex=['src'] loest PyInstaller den Import
+# ganz normal auf und verfolgt automatisch alle echten Importe von dort aus.
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
     datas=[
-        ('src', 'src'),
+        ('src/resources', 'src/resources'),
         (_ffmpeg_exe, 'imageio_ffmpeg/binaries'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
-        'mutagen',
-        'PIL',
-        'smartcard',
     ],
     hookspath=[],
     hooksconfig={},
