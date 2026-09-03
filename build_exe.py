@@ -6,8 +6,20 @@ Erstellt eine standalone .exe Datei mit PyInstaller
 import subprocess
 import sys
 import os
+import re
 import shutil
 from pathlib import Path
+
+
+def get_version() -> str:
+    """Liest die Versionsnummer aus src/core/__init__.py (einzige Quelle im
+    Projekt). Liest den Text nur per Regex statt zu importieren, damit das
+    Build-Skript nicht von den Laufzeit-Abhaengigkeiten (PyQt6 etc.) abhaengt."""
+    init_file = Path("src/core/__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_file)
+    if not match:
+        raise RuntimeError("Konnte __version__ nicht in src/core/__init__.py finden")
+    return match.group(1)
 
 
 def clean_build():
@@ -26,22 +38,22 @@ def clean_build():
 
 def create_exe():
     """Erstellt die EXE mit PyInstaller"""
-    
+
     # Spec-Datei verwenden
     spec_file = "Tonuino-Manager.spec"
-    
+
     args = [
         sys.executable, "-m", "PyInstaller",
         spec_file,
         "--clean",
         "--noconfirm",
     ]
-    
+
     print("Erstelle EXE-Datei...")
     print(f"Kommando: {' '.join(args)}")
-    
+
     result = subprocess.run(args, capture_output=False)
-    
+
     if result.returncode == 0:
         print("\n" + "="*50)
         print("ERFOLG! EXE-Datei erstellt.")
@@ -52,40 +64,66 @@ def create_exe():
         sys.exit(1)
 
 
-def copy_additional_files():
-    """Kopiert zusaetzliche Dateien in den dist-Ordner"""
-    dist_dir = Path("dist")
-    
-    # README kopieren
-    if Path("README.md").exists():
-        shutil.copy2("README.md", dist_dir / "README.md")
-        print("README.md kopiert")
-    
-    # Leere resources-Ordner erstellen falls nicht vorhanden
-    resources_dir = dist_dir / "resources"
-    if not resources_dir.exists():
-        resources_dir.mkdir()
-        print("resources-Ordner erstellt")
+def find_inno_setup_compiler() -> str:
+    """Sucht den Inno Setup Kommandozeilen-Compiler (ISCC.exe)"""
+    candidates = [
+        shutil.which("ISCC"),
+        shutil.which("ISCC.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"),
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+def create_installer():
+    """Erstellt den Windows-Installer mit Inno Setup (registriert sich
+    automatisch korrekt fuer 'Apps & Features' in den Windows-Einstellungen)"""
+    iscc = find_inno_setup_compiler()
+    if not iscc:
+        print("\nHINWEIS: Inno Setup (ISCC.exe) wurde nicht gefunden - "
+              "Installer wird uebersprungen.")
+        print("Installierbar unter: https://jrsoftware.org/isdl.php")
+        return
+
+    version = get_version()
+    print(f"Erstelle Installer mit Inno Setup (Version {version})...")
+    result = subprocess.run(
+        [iscc, f"/DMyAppVersion={version}", "installer.iss"],
+        capture_output=False
+    )
+
+    if result.returncode == 0:
+        print("\n" + "="*50)
+        print("ERFOLG! Installer erstellt.")
+        print("="*50)
+        print("\nDer Installer befindet sich in: dist/Tonuino-Manager-Setup.exe")
+    else:
+        print("\nFEHLER beim Erstellen des Installers!")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     print("="*50)
-    print("  Tonuino-Manager - Build")
+    print(f"  Tonuino-Manager {get_version()} - Build")
     print("="*50)
     print()
     
     # Alten Build saeubern
     clean_build()
-    
+
     # EXE erstellen
     create_exe()
-    
-    # Zusaetzliche Dateien
-    copy_additional_files()
-    
-    
+
+    # Installer erstellen (falls Inno Setup verfuegbar ist)
+    create_installer()
+
     print("\n" + "="*50)
     print("Build abgeschlossen!")
     print("="*50)
-    print("\nDu findest die EXE-Datei im 'dist'-Ordner.")
-    print("Starte sie mit: dist/Tonuino-Manager.exe")
+    print("\nIm 'dist'-Ordner findest du:")
+    print("  - Tonuino-Manager.exe        (portable, ohne Installation lauffaehig)")
+    print("  - Tonuino-Manager-Setup.exe  (Installer, ueber Windows-Einstellungen deinstallierbar)")

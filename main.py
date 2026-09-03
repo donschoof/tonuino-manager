@@ -25,6 +25,7 @@ if src_dir not in sys.path:
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
+from core import __version__
 from gui.main_window import MainWindow
 
 
@@ -35,7 +36,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Tonuino-Manager")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion(__version__)
     app.setOrganizationName("TonuinoManager")
 
     icon_path = os.path.join(src_dir, "resources", "icon.ico")
