@@ -1,5 +1,5 @@
 """
-Stylesheet fuer den Tonuino SD-Manager
+Stylesheet fuer den Tonuino-Manager
 Modernes Dark Theme mit Akzentfarben
 """
 
@@ -103,6 +103,13 @@ QListWidget::item:hover {
     background-color: #282838;
 }
 
+/* Ordnerliste nutzt ein eigenes Zeilen-Widget (Badge + Name) mit eigenem
+   Innenabstand - das generische 8px-Item-Padding wuerde dafuer zu viel
+   Hoehe wegnehmen und die Badge zusammenquetschen. */
+QListWidget#folderList::item {
+    padding: 2px 4px;
+}
+
 /* === Ordnerliste: Nummer-Badge + Name === */
 QLabel#folderBadge {
     background-color: #313244;
@@ -110,6 +117,7 @@ QLabel#folderBadge {
     border-radius: 6px;
     font-weight: bold;
     font-size: 9pt;
+    padding: 2px 6px;
 }
 
 QLabel#folderNameLabel {

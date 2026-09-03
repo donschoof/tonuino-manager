@@ -5,6 +5,7 @@ Erkennt und verwaltet Tonuio-konforme SD-Karten
 
 import os
 import re
+import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
@@ -30,22 +31,14 @@ class Track:
         return self.filename
 
 
-@dataclass 
+@dataclass
 class Folder:
     """Repraesentiert einen Tonuio-Ordner (01-99)"""
     index: int
     path: str
-    friendly_name: str = ""
     tracks: List[Track] = field(default_factory=list)
     cover_path: str = ""
-    
-    @property
-    def display_name(self) -> str:
-        """Lesbarer Name fuer die Anzeige"""
-        if self.friendly_name:
-            return f"{self.index:02d} - {self.friendly_name}"
-        return f"Ordner {self.index:02d}"
-    
+
     @property
     def track_count(self) -> int:
         return len(self.tracks)
@@ -62,17 +55,15 @@ class SDCard:
         self.folders: Dict[int, Folder] = {}
         self.config_path = self.path / "tonuio.cfg"
         self.is_valid_tonuino = False
-        self._friendly_names: Dict[int, str] = {}
-        
+
     def scan(self) -> bool:
         """Scannt die SD-Karte und erkennt Tonuio-Struktur"""
         if not self.path.exists():
             return False
-            
+
         self.is_valid_tonuino = self._detect_tonuino_structure()
-        self._load_friendly_names()
         self._scan_folders()
-        
+
         return True
     
     def _detect_tonuino_structure(self) -> bool:
@@ -108,8 +99,7 @@ class SDCard:
             
             folder = Folder(
                 index=folder_index,
-                path=str(item),
-                friendly_name=self._friendly_names.get(folder_index, "")
+                path=str(item)
             )
             
             self._scan_tracks(folder)
@@ -153,47 +143,6 @@ class SDCard:
                 folder.cover_path = str(cover_file)
                 break
     
-    def _load_friendly_names(self):
-        """Laedt freundliche Namen aus der Konfigurationsdatei"""
-        self._friendly_names.clear()
-        
-        config_file = self.path / "friendly_names.txt"
-        if not config_file.exists():
-            return
-            
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if ':' in line:
-                        idx_str, name = line.split(':', 1)
-                        try:
-                            idx = int(idx_str.strip())
-                            self._friendly_names[idx] = name.strip()
-                        except ValueError:
-                            continue
-        except Exception:
-            pass
-    
-    def save_friendly_name(self, folder_index: int, name: str):
-        """Speichert einen freundlichen Namen fuer einen Ordner"""
-        self._friendly_names[folder_index] = name
-        
-        if folder_index in self.folders:
-            self.folders[folder_index].friendly_name = name
-        
-        self._save_friendly_names()
-    
-    def _save_friendly_names(self):
-        """Speichert alle freundliche Namen"""
-        config_file = self.path / "friendly_names.txt"
-        try:
-            with open(config_file, 'w', encoding='utf-8') as f:
-                for idx, name in sorted(self._friendly_names.items()):
-                    f.write(f"{idx:02d}:{name}\n")
-        except Exception as e:
-            raise IOError(f"Fehler beim Speichern der Namen: {e}")
-    
     def create_folder(self, folder_index: int) -> Folder:
         """Erstellt einen neuen Tonuio-Ordner"""
         if folder_index < 1 or folder_index > 99:
@@ -215,11 +164,62 @@ class SDCard:
     def get_folder(self, index: int) -> Optional[Folder]:
         """Gibt einen Ordner zurueck"""
         return self.folders.get(index)
-    
+
+    def delete_folder(self, folder_index: int):
+        """Loescht einen Ordner samt Inhalt von der SD-Karte"""
+        folder = self.folders.get(folder_index)
+        if not folder:
+            raise ValueError(f"Ordner {folder_index:02d} nicht gefunden")
+
+        shutil.rmtree(folder.path)
+        del self.folders[folder_index]
+
+    def delete_tracks(self, folder: Folder, tracks_to_delete: List[Track]):
+        """Loescht die angegebenen Tracks von der SD-Karte und benennt die
+        verbleibenden Tracks anschliessend fortlaufend um (001.mp3, 002.mp3, ...),
+        wie von Tonuino benoetigt (keine Luecken in der Nummerierung)."""
+        delete_paths = {t.filepath for t in tracks_to_delete}
+
+        for track in tracks_to_delete:
+            Path(track.filepath).unlink(missing_ok=True)
+
+        remaining = [t for t in folder.tracks if t.filepath not in delete_paths]
+        self.reorder_tracks(folder, remaining)
+
+    def reorder_tracks(self, folder: Folder, new_order: List[Track]):
+        """Bringt die Tracks eines Ordners in die angegebene Reihenfolge und
+        benennt die Dateien entsprechend fortlaufend um (001.mp3, 002.mp3, ...).
+        Wird sowohl nach dem Loeschen als auch nach manuellem Umsortieren benutzt."""
+        folder_path = Path(folder.path)
+
+        # Schritt 1: alle betroffenen Dateien auf temporaere Namen umbenennen,
+        # damit sich Ziel- und Quellname beim Umnummerieren nicht ueberschneiden
+        # koennen (z.B. beim Vertauschen von 001.mp3 und 002.mp3).
+        temp_paths = []
+        for track in new_order:
+            temp_path = folder_path / f".tmp_{track.filename}"
+            Path(track.filepath).rename(temp_path)
+            temp_paths.append(temp_path)
+
+        # Schritt 2: von den temporaeren Namen auf die finalen, luecken- und
+        # kollisionsfreien Namen umbenennen.
+        updated_tracks = []
+        for position, (track, temp_path) in enumerate(zip(new_order, temp_paths), start=1):
+            final_name = f"{position:03d}.mp3"
+            final_path = folder_path / final_name
+            temp_path.rename(final_path)
+
+            track.index = position
+            track.filename = final_name
+            track.filepath = str(final_path)
+            updated_tracks.append(track)
+
+        folder.tracks = updated_tracks
+
     @property
     def folder_count(self) -> int:
         return len(self.folders)
-    
+
     @property
     def total_tracks(self) -> int:
         return sum(f.track_count for f in self.folders.values())

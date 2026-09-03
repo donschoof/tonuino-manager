@@ -1,23 +1,46 @@
 """
-Hauptfenster des Tonuino SD-Managers
+Hauptfenster des Tonuino-Managers
 """
 
 import os
+import sys
 from pathlib import Path
+from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QProgressBar, QSplitter, QInputDialog
+    QStatusBar, QProgressBar, QSplitter, QInputDialog,
+    QAbstractItemView, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
 from core.sd_card import SDCard, Folder, Track
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader
 from core.tonuino_config import TonuinoConfigManager
+
+
+def resource_path(*parts) -> str:
+    """Ermittelt einen Pfad relativ zum src-Verzeichnis - funktioniert sowohl im
+    Skript- als auch im PyInstaller-EXE-Modus (siehe auch main.py)."""
+    if getattr(sys, 'frozen', False):
+        src_dir = os.path.join(os.path.dirname(sys.executable), 'src')
+    else:
+        src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(src_dir, *parts)
+
+
+class ClickableLabel(QLabel):
+    """QLabel, das per Klick ein Signal auslöst (fuer das Cover-Bild als In-Place-Button)"""
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class SDCardScanner(QThread):
@@ -44,12 +67,91 @@ class SDCardScanner(QThread):
             self.finished.emit(False)
 
 
+class TrackAddWorker(QThread):
+    """Thread zum Hinzufuegen (Kopieren/Konvertieren) von Tracks, damit die
+    UI waehrend FFmpeg-Konvertierung/Datei-I/O nicht einfriert."""
+    progress = pyqtSignal(int, int, str)  # aktueller Index, Gesamtzahl, Dateiname
+    track_added = pyqtSignal(object)  # neuer Track
+    error = pyqtSignal(str, str)  # Dateiname, Fehlermeldung
+    finished = pyqtSignal(int)  # Anzahl erfolgreich hinzugefuegter Tracks
+
+    def __init__(self, folder: Folder, filepaths: list,
+                 audio_converter: AudioConverter, metadata_manager: MetadataManager):
+        super().__init__()
+        self.folder = folder
+        self.filepaths = filepaths
+        self.audio_converter = audio_converter
+        self.metadata_manager = metadata_manager
+        self._cancelled = False
+        # Bereits belegte Tracknummern werden hier fortlaufend gefuehrt, da die
+        # eigentliche Ordnerliste (folder.tracks) erst im GUI-Thread aktualisiert wird
+        self._used_numbers = {t.index for t in folder.tracks}
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        added = 0
+        for i, filepath in enumerate(self.filepaths, start=1):
+            if self._cancelled:
+                break
+
+            self.progress.emit(i, len(self.filepaths), os.path.basename(filepath))
+
+            next_number = 1
+            while next_number in self._used_numbers:
+                next_number += 1
+            if next_number > 999:
+                break
+
+            dest_filename = f"{next_number:03d}.mp3"
+            dest_path = Path(self.folder.path) / dest_filename
+
+            try:
+                if self.audio_converter.needs_conversion(filepath):
+                    if not self.audio_converter.is_available:
+                        self.error.emit(os.path.basename(filepath), "FFmpeg ist nicht verfuegbar.")
+                        continue
+                    self.audio_converter.convert_to_mp3(filepath, str(dest_path))
+                else:
+                    import shutil
+                    shutil.copy2(filepath, dest_path)
+
+                source_metadata = self.metadata_manager.read_metadata(filepath)
+                if source_metadata.title:
+                    self.metadata_manager.write_metadata(
+                        str(dest_path),
+                        title=source_metadata.title,
+                        artist=source_metadata.artist,
+                        album=source_metadata.album,
+                        track_number=next_number
+                    )
+
+                new_track = Track(
+                    index=next_number,
+                    filename=dest_filename,
+                    filepath=str(dest_path),
+                    title=source_metadata.title
+                )
+                self._used_numbers.add(next_number)
+                self.track_added.emit(new_track)
+                added += 1
+
+            except Exception as e:
+                self.error.emit(os.path.basename(filepath), str(e))
+
+        self.finished.emit(added)
+
+
 class MainWindow(QMainWindow):
-    """Hauptfenster des Tonuino SD-Managers"""
-    
+    """Hauptfenster des Tonuino-Managers"""
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Tonuino SD-Manager")
+        self.setWindowTitle("Tonuino-Manager")
+        icon_path = resource_path("resources", "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(1200, 800)
         
         self.sd_card: SDCard = None
@@ -123,10 +225,24 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         
-        title = QLabel("Tonuino SD-Manager")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+
+        logo_path = resource_path("resources", "icon.png")
+        logo_label = QLabel()
+        logo_pixmap = QPixmap(logo_path)
+        if not logo_pixmap.isNull():
+            logo_label.setPixmap(logo_pixmap.scaled(
+                40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            ))
+        title_row.addWidget(logo_label)
+
+        title = QLabel("Tonuino-Manager")
         title.setObjectName("sidebarTitle")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        layout.addWidget(title)
+        title_row.addWidget(title, 1)
+
+        layout.addLayout(title_row)
         
         btn_open_sd = QPushButton("SD-Karte öffnen")
         btn_open_sd.setObjectName("primaryButton")
@@ -141,6 +257,7 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(QLabel("Ordner:"))
         self.folder_list = QListWidget()
+        self.folder_list.setObjectName("folderList")
         self.folder_list.itemClicked.connect(self._on_folder_selected)
         layout.addWidget(self.folder_list)
         
@@ -217,6 +334,23 @@ class MainWindow(QMainWindow):
         icon_label.style().unpolish(icon_label)
         icon_label.style().polish(icon_label)
 
+    def _icon_from_glyph(self, glyph: str, color: str = "#1e1e2e", size: int = 16) -> QIcon:
+        """Rendert ein Glyph aus Segoe Fluent Icons/Segoe MDL2 Assets als QIcon,
+        damit es (anders als reiner Text) mit setIcon() auf Buttons benutzt
+        werden kann, ohne die restliche Button-Schrift zu beeinflussen."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        font = QFont("Segoe Fluent Icons")
+        font.setPointSize(int(size * 0.65))
+        painter.setFont(font)
+        painter.setPen(QColor(color))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
+        painter.end()
+
+        return QIcon(pixmap)
+
     def _create_main_content(self) -> QWidget:
         """Erstellt den Hauptbereich"""
         content = QWidget()
@@ -228,7 +362,7 @@ class MainWindow(QMainWindow):
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        welcome_label = QLabel("Willkommen beim Tonuino SD-Manager!")
+        welcome_label = QLabel("Willkommen beim Tonuino-Manager!")
         welcome_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_label)
@@ -254,28 +388,30 @@ class MainWindow(QMainWindow):
         
         header_layout.addStretch()
         
-        btn_add_tracks = QPushButton("Tracks hinzufuegen")
+        btn_add_tracks = QPushButton(" Tracks hinzufuegen")
         btn_add_tracks.setObjectName("primaryButton")
+        btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
         btn_add_tracks.clicked.connect(self._add_tracks)
         header_layout.addWidget(btn_add_tracks)
-        
-        btn_set_cover = QPushButton("Cover setzen")
-        btn_set_cover.clicked.connect(self._set_folder_cover)
-        header_layout.addWidget(btn_set_cover)
-        
-        btn_rename = QPushButton("Umbenennen")
-        btn_rename.clicked.connect(self._rename_folder)
-        header_layout.addWidget(btn_rename)
-        
+
+        btn_delete_folder = QPushButton(" Ordner loeschen")
+        btn_delete_folder.setObjectName("dangerButton")
+        btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        btn_delete_folder.clicked.connect(self._delete_folder)
+        header_layout.addWidget(btn_delete_folder)
+
         folder_layout.addLayout(header_layout)
         
         info_layout = QHBoxLayout()
         
-        self.cover_label = QLabel()
+        self.cover_label = ClickableLabel()
         self.cover_label.setObjectName("coverLabel")
         self.cover_label.setFixedSize(150, 150)
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setText("Kein Cover")
+        self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
+        self.cover_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cover_label.setToolTip("Klicken um das Cover zu aendern")
+        self.cover_label.clicked.connect(self._set_folder_cover)
         info_layout.addWidget(self.cover_label)
         
         self.folder_info = QLabel()
@@ -283,10 +419,39 @@ class MainWindow(QMainWindow):
         info_layout.addWidget(self.folder_info, 1)
         
         folder_layout.addLayout(info_layout)
-        
-        folder_layout.addWidget(QLabel("Tracks:"))
+
+        track_header_layout = QHBoxLayout()
+        track_header_layout.addWidget(QLabel("Tracks:"))
+        track_header_layout.addStretch()
+
+        self.btn_move_track_up = QPushButton()
+        self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
+        self.btn_move_track_up.setToolTip("Ausgewaehlten Track nach oben verschieben")
+        self.btn_move_track_up.setEnabled(False)
+        self.btn_move_track_up.clicked.connect(lambda: self._move_current_track(-1))
+        track_header_layout.addWidget(self.btn_move_track_up)
+
+        self.btn_move_track_down = QPushButton()
+        self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
+        self.btn_move_track_down.setToolTip("Ausgewaehlten Track nach unten verschieben")
+        self.btn_move_track_down.setEnabled(False)
+        self.btn_move_track_down.clicked.connect(lambda: self._move_current_track(1))
+        track_header_layout.addWidget(self.btn_move_track_down)
+
+        self.btn_delete_tracks = QPushButton(" Auswahl loeschen")
+        self.btn_delete_tracks.setObjectName("dangerButton")
+        self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        self.btn_delete_tracks.setEnabled(False)
+        self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
+        track_header_layout.addWidget(self.btn_delete_tracks)
+
+        folder_layout.addLayout(track_header_layout)
+
         self.track_list = QListWidget()
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
+        self.track_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.track_list.currentItemChanged.connect(self._on_track_current_changed)
+        self.track_list.itemChanged.connect(self._on_track_check_changed)
         folder_layout.addWidget(self.track_list)
         
         self.stack = QStackedWidget()
@@ -382,14 +547,8 @@ class MainWindow(QMainWindow):
             self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder.index, name))
 
     def _resolve_folder_name(self, folder: Folder) -> str:
-        """Ermittelt den Anzeigenamen eines Ordners:
-        1. Manuell vergebener Name (friendly_name, siehe 'Umbenennen')
-        2. Album-Tag der ersten Track-Datei (der Reihe nach), die einen hat
-        3. Fallback: 'Ordner NN'
-        """
-        if folder.friendly_name:
-            return folder.friendly_name
-
+        """Ermittelt den Anzeigenamen eines Ordners aus dem Album-Tag der ersten
+        Track-Datei (der Reihe nach), die einen hat. Fallback: 'Ordner NN'."""
         if folder.index in self._folder_name_cache:
             return self._folder_name_cache[folder.index]
 
@@ -413,7 +572,7 @@ class MainWindow(QMainWindow):
         badge = QLabel(f"{folder_index:02d}")
         badge.setObjectName("folderBadge")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setFixedSize(30, 22)
+        badge.setMinimumSize(34, 24)
         row.addWidget(badge)
 
         name_label = QLabel(name)
@@ -426,29 +585,54 @@ class MainWindow(QMainWindow):
         """Wird aufgerufen wenn ein Ordner ausgewaehlt wird"""
         folder_idx = item.data(Qt.ItemDataRole.UserRole)
         self.current_folder = self.sd_card.get_folder(folder_idx)
-        
+
         if self.current_folder:
             self._show_folder(self.current_folder)
-    
+
+    def _select_folder_in_list(self, folder_index: int):
+        """Waehlt einen Ordner in der Sidebar-Liste aus und zeigt ihn im Hauptbereich an
+        (z.B. direkt nach dem Anlegen eines neuen Ordners)"""
+        for row in range(self.folder_list.count()):
+            item = self.folder_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == folder_index:
+                self.folder_list.setCurrentItem(item)
+                self._on_folder_selected(item)
+                return
+
+    def _get_folder_cover_pixmap(self, folder: Folder) -> Optional[QPixmap]:
+        """Ermittelt das Cover eines Ordners: zuerst aus den ID3-Metadaten des ersten
+        Tracks (der Reihe nach) mit eingebettetem Cover, sonst Fallback auf eine
+        Cover-Datei im Ordner (Altbestand, z.B. cover.jpg von frueheren Versionen)."""
+        for track in sorted(folder.tracks, key=lambda t: t.index):
+            cover_bytes = self.metadata_manager.get_cover_bytes(track.filepath)
+            if cover_bytes:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(cover_bytes):
+                    return pixmap
+
+        if folder.cover_path:
+            pixmap = QPixmap(folder.cover_path)
+            if not pixmap.isNull():
+                return pixmap
+
+        return None
+
     def _show_folder(self, folder: Folder):
         """Zeigt einen Ordner an"""
         self.stack.setCurrentWidget(self.folder_widget)
         
-        self.folder_title.setText(folder.display_name)
+        self.folder_title.setText(self._resolve_folder_name(folder))
         
-        if folder.cover_path:
-            pixmap = QPixmap(folder.cover_path)
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    150, 150,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.cover_label.setPixmap(scaled)
-            else:
-                self.cover_label.setText("Kein Cover")
+        pixmap = self._get_folder_cover_pixmap(folder)
+        if pixmap:
+            scaled = pixmap.scaled(
+                150, 150,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.cover_label.setPixmap(scaled)
         else:
-            self.cover_label.setText("Kein Cover")
+            self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
         
         info_text = (
             f"Ordner-Nummer: {folder.index:02d}\n"
@@ -462,17 +646,32 @@ class MainWindow(QMainWindow):
                 info_text += f"\nWiedergabemodus: {mode}"
         
         self.folder_info.setText(info_text)
-        
+
+        self._populate_track_list(folder)
+
+    def _populate_track_list(self, folder: Folder):
+        """Baut die Track-Liste eines Ordners neu auf (liest Metadaten je Track).
+        Jeder Track hat eine Checkbox zum Auswaehlen fuer das Loeschen mehrerer
+        Tracks - unabhaengig von der normalen (Einzel-)Auswahl, die fuer die
+        Nach-oben/unten-Buttons benutzt wird."""
+        self.track_list.blockSignals(True)
         self.track_list.clear()
         for track in folder.tracks:
             metadata = self.metadata_manager.read_metadata(track.filepath)
             track.title = metadata.title
             track.artist = metadata.artist
             track.album = metadata.album
-            
+
             item = QListWidgetItem(track.display_name)
             item.setData(Qt.ItemDataRole.UserRole, track)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             self.track_list.addItem(item)
+        self.track_list.blockSignals(False)
+
+        self.btn_delete_tracks.setEnabled(False)
+        self.btn_move_track_up.setEnabled(False)
+        self.btn_move_track_down.setEnabled(False)
     
     def _create_new_folder(self):
         """Erstellt einen neuen Ordner"""
@@ -484,6 +683,7 @@ class MainWindow(QMainWindow):
                 try:
                     folder = self.sd_card.create_folder(i)
                     self._populate_folder_list()
+                    self._select_folder_in_list(i)
                     self.status_bar.showMessage(f"Ordner {i:02d} erstellt")
                     return
                 except Exception as e:
@@ -496,134 +696,146 @@ class MainWindow(QMainWindow):
             "Maximale Anzahl von 99 Ordnern erreicht!"
         )
 
-    def _add_tracks(self):
-        """Fuegt Tracks zum aktuellen Ordner hinzu"""
+    def _delete_folder(self):
+        """Loescht den aktuellen Ordner samt Inhalt unwiderruflich von der SD-Karte"""
         if not self.current_folder:
             return
-        
+
+        folder = self.current_folder
+        name = self._resolve_folder_name(folder)
+
+        reply = QMessageBox.question(
+            self,
+            "Ordner löschen",
+            f"Soll der Ordner '{name}' (Ordner {folder.index:02d}) mit allen "
+            f"{folder.track_count} Track(s) unwiderruflich von der SD-Karte "
+            f"gelöscht werden?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.sd_card.delete_folder(folder.index)
+            self._folder_name_cache.pop(folder.index, None)
+            self.current_folder = None
+            self.stack.setCurrentWidget(self.welcome_widget)
+            self._populate_folder_list()
+            self.status_bar.showMessage(f"Ordner {folder.index:02d} gelöscht")
+        except Exception as e:
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
+
+    def _add_tracks(self):
+        """Fuegt Tracks zum aktuellen Ordner hinzu (im Hintergrund, mit Fortschrittsanzeige)"""
+        if not self.current_folder:
+            return
+
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Audio-Dateien auswaehlen",
             "",
             "Audio (*.mp3 *.wav *.flac *.ogg *.aac *.wma *.m4a *.opus);;Alle (*)"
         )
-        
+
         if not files:
             return
-        
-        for filepath in files:
-            self._add_single_track(filepath)
+
+        self._add_tracks_errors = []
+
+        self._add_tracks_dialog = QProgressDialog(
+            "Tracks werden hinzugefügt...", "Abbrechen", 0, len(files), self
+        )
+        self._add_tracks_dialog.setWindowTitle("Tracks hinzufügen")
+        self._add_tracks_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._add_tracks_dialog.setMinimumDuration(0)
+        self._add_tracks_dialog.setValue(0)
+
+        self._add_tracks_worker = TrackAddWorker(
+            self.current_folder, files, self.audio_converter, self.metadata_manager
+        )
+        self._add_tracks_worker.progress.connect(self._on_add_tracks_progress)
+        self._add_tracks_worker.track_added.connect(self._on_track_added)
+        self._add_tracks_worker.error.connect(self._on_add_tracks_error)
+        self._add_tracks_worker.finished.connect(self._on_add_tracks_finished)
+        self._add_tracks_dialog.canceled.connect(self._add_tracks_worker.cancel)
+
+        self._add_tracks_worker.start()
+
+    def _on_add_tracks_progress(self, current: int, total: int, filename: str):
+        self._add_tracks_dialog.setLabelText(f"({current}/{total}) {filename}")
+        self._add_tracks_dialog.setValue(current)
+
+    def _on_track_added(self, track: Track):
+        self.current_folder.tracks.append(track)
+        self.current_folder.tracks.sort(key=lambda t: t.index)
+
+    def _on_add_tracks_error(self, filename: str, message: str):
+        self._add_tracks_errors.append(f"{filename}: {message}")
+
+    def _on_add_tracks_finished(self, added_count: int):
+        self._add_tracks_dialog.close()
 
         self._folder_name_cache.pop(self.current_folder.index, None)
         self._show_folder(self.current_folder)
         self._populate_folder_list()
-        self.status_bar.showMessage(f"{len(files)} Tracks hinzugefuegt")
-    
-    def _add_single_track(self, filepath: str):
-        """Fuegt einen einzelnen Track hinzu"""
-        if not self.current_folder:
-            return
-        
-        existing_numbers = {t.index for t in self.current_folder.tracks}
-        next_number = 1
-        while next_number in existing_numbers:
-            next_number += 1
-        
-        if next_number > 999:
-            return
-        
-        dest_filename = f"{next_number:03d}.mp3"
-        dest_path = Path(self.current_folder.path) / dest_filename
-        
-        try:
-            if self.audio_converter.needs_conversion(filepath):
-                if not self.audio_converter.is_available:
-                    QMessageBox.warning(
-                        self,
-                        "FFmpeg fehlt",
-                        "FFmpeg ist nicht verfuegbar."
-                    )
-                    return
-                
-                self.audio_converter.convert_to_mp3(filepath, str(dest_path))
-            else:
-                import shutil
-                shutil.copy2(filepath, dest_path)
-            
-            source_metadata = self.metadata_manager.read_metadata(filepath)
-            if source_metadata.title:
-                self.metadata_manager.write_metadata(
-                    str(dest_path),
-                    title=source_metadata.title,
-                    artist=source_metadata.artist,
-                    album=source_metadata.album,
-                    track_number=next_number
-                )
-            
-            new_track = Track(
-                index=next_number,
-                filename=dest_filename,
-                filepath=str(dest_path),
-                title=source_metadata.title
-            )
-            self.current_folder.tracks.append(new_track)
-            self.current_folder.tracks.sort(key=lambda t: t.index)
-            
-        except Exception as e:
+        self.status_bar.showMessage(f"{added_count} Track(s) hinzugefuegt")
+
+        if self._add_tracks_errors:
             QMessageBox.warning(
                 self,
-                "Fehler",
-                f"Fehler beim Hinzufuegen: {e}"
+                "Einige Tracks konnten nicht hinzugefuegt werden",
+                "\n".join(self._add_tracks_errors)
             )
-    
+
     def _set_folder_cover(self):
-        """Setzt das Cover fuer den aktuellen Ordner"""
+        """Setzt das Cover fuer den aktuellen Ordner - wird in die ID3-Metadaten
+        aller Tracks des Ordners uebernommen (das Cover wird von dort geladen)."""
         if not self.current_folder:
             return
-        
+
+        if not self.current_folder.tracks:
+            QMessageBox.information(
+                self,
+                "Keine Tracks",
+                "Dieser Ordner hat noch keine Tracks - bitte zuerst Tracks hinzufuegen."
+            )
+            return
+
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Cover-Bild auswaehlen",
             "",
             "Bilder (*.jpg *.png *.jpeg);;Alle (*)"
         )
-        
+
         if not filepath:
             return
-        
-        dest_path = Path(self.current_folder.path) / "cover.jpg"
-        
+
+        import tempfile
+
         try:
             from PIL import Image
-            img = Image.open(filepath)
+            img = Image.open(filepath).convert("RGB")
             img = img.resize((300, 300), Image.Resampling.LANCZOS)
-            img.save(str(dest_path), "JPEG", quality=90)
-            
-            self.current_folder.cover_path = str(dest_path)
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+            os.close(tmp_fd)
+            img.save(tmp_path, "JPEG", quality=90)
+
+            try:
+                updated = sum(
+                    1 for track in self.current_folder.tracks
+                    if self.metadata_manager.set_cover(track.filepath, tmp_path)
+                )
+            finally:
+                os.remove(tmp_path)
+
             self._show_folder(self.current_folder)
-            self.status_bar.showMessage("Cover gesetzt")
-            
+            self.status_bar.showMessage(f"Cover fuer {updated} Track(s) aktualisiert")
+
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler: {e}")
-    
-    def _rename_folder(self):
-        """Benennt einen Ordner um"""
-        if not self.current_folder:
-            return
-        
-        current_name = self.current_folder.friendly_name or ""
-        name, ok = QInputDialog.getText(
-            self,
-            "Ordner umbenennen",
-            "Name fuer den Ordner:",
-            text=current_name
-        )
-        
-        if ok and name:
-            self.sd_card.save_friendly_name(self.current_folder.index, name)
-            self._populate_folder_list()
-            self._show_folder(self.current_folder)
-            self.status_bar.showMessage(f"Ordner umbenannt in: {name}")
     
     def _on_track_double_clicked(self, item: QListWidgetItem):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
@@ -648,6 +860,92 @@ class MainWindow(QMainWindow):
                 track_number=new_metadata.track_number
             )
             self._show_folder(self.current_folder)
+
+    def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+        """Aktiviert/deaktiviert die Nach-oben/unten-Buttons je nachdem, ob ein
+        Track (einzeln) ausgewaehlt ist"""
+        has_current = current is not None
+        self.btn_move_track_up.setEnabled(has_current)
+        self.btn_move_track_down.setEnabled(has_current)
+
+    def _on_track_check_changed(self, item: QListWidgetItem):
+        """Aktiviert/deaktiviert den 'Auswahl loeschen'-Button je nachdem, ob
+        mindestens ein Track per Checkbox ausgewaehlt ist"""
+        any_checked = any(
+            self.track_list.item(row).checkState() == Qt.CheckState.Checked
+            for row in range(self.track_list.count())
+        )
+        self.btn_delete_tracks.setEnabled(any_checked)
+
+    def _get_checked_tracks(self) -> list:
+        return [
+            self.track_list.item(row).data(Qt.ItemDataRole.UserRole)
+            for row in range(self.track_list.count())
+            if self.track_list.item(row).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _delete_selected_tracks(self):
+        """Loescht die per Checkbox ausgewaehlten Tracks von der SD-Karte und
+        nummeriert die verbleibenden Tracks fortlaufend um (keine Luecken, wie
+        von Tonuino benoetigt)"""
+        if not self.current_folder:
+            return
+
+        tracks = self._get_checked_tracks()
+        if not tracks:
+            return
+
+        if len(tracks) == 1:
+            message = f"Soll der Track '{tracks[0].display_name}' unwiderruflich gelöscht werden?"
+        else:
+            message = f"Sollen die {len(tracks)} ausgewählten Tracks unwiderruflich gelöscht werden?"
+
+        reply = QMessageBox.question(
+            self,
+            "Tracks löschen",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.sd_card.delete_tracks(self.current_folder, tracks)
+            self._folder_name_cache.pop(self.current_folder.index, None)
+            self._show_folder(self.current_folder)
+            self._populate_folder_list()
+            self.status_bar.showMessage(f"{len(tracks)} Track(s) gelöscht")
+        except Exception as e:
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
+
+    def _move_current_track(self, delta: int):
+        """Verschiebt den aktuell (einzeln) ausgewaehlten Track um eine Position
+        nach oben (delta=-1) oder unten (delta=1) und benennt die Dateien auf
+        der SD-Karte entsprechend fortlaufend um."""
+        if not self.current_folder:
+            return
+
+        current_item = self.track_list.currentItem()
+        if not current_item:
+            return
+
+        row = self.track_list.row(current_item)
+        target_row = row + delta
+        if target_row < 0 or target_row >= len(self.current_folder.tracks):
+            return
+
+        new_order = list(self.current_folder.tracks)
+        new_order[row], new_order[target_row] = new_order[target_row], new_order[row]
+
+        try:
+            self.sd_card.reorder_tracks(self.current_folder, new_order)
+            self._folder_name_cache.pop(self.current_folder.index, None)
+            self._populate_track_list(self.current_folder)
+            self.track_list.setCurrentRow(target_row)
+            self.status_bar.showMessage("Reihenfolge aktualisiert")
+        except Exception as e:
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
 
     def _update_card_status(self, present: bool):
         """Setzt Karten- und Programmiert-Icon auf den 'keine Karte'-Zustand zurueck"""
@@ -737,7 +1035,7 @@ class MainWindow(QMainWindow):
         mode_label, ok = QInputDialog.getItem(
             self,
             "Wiedergabemodus",
-            f"Modus fuer Ordner '{self.current_folder.display_name}':",
+            f"Modus fuer Ordner '{self._resolve_folder_name(self.current_folder)}':",
             mode_labels,
             1,  # Standard: Album
             False
@@ -762,7 +1060,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Karte programmieren",
-            f"Soll die Karte fuer Ordner \'{self.current_folder.display_name}\' "
+            f"Soll die Karte fuer Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
             f"programmiert werden?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )

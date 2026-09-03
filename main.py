@@ -1,5 +1,5 @@
 """
-Tonuino SD-Karten Manager
+Tonuino-Manager
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 """
 
@@ -22,6 +22,7 @@ if src_dir not in sys.path:
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from gui.main_window import MainWindow
 
 
@@ -29,16 +30,20 @@ def main():
     # High DPI Skalierung aktivieren
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-    
+
     app = QApplication(sys.argv)
-    app.setApplicationName("Tonuino SD-Manager")
+    app.setApplicationName("Tonuino-Manager")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("TonuinoManager")
-    
+
+    icon_path = os.path.join(src_dir, "resources", "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     # Stylesheet laden
     from gui.styles import MAIN_STYLESHEET
     app.setStyleSheet(MAIN_STYLESHEET)
-    
+
     window = MainWindow()
     window.show()
     

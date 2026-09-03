@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ==========================================
-echo   Tonuino SD-Manager - EXE erstellen
+echo   Tonuino-Manager - EXE erstellen
 echo ==========================================
 echo.
 

@@ -1,1 +1,1 @@
-# Kernlogik-Paket für Tonuino SD-Manager
+# Kernlogik-Paket für Tonuino-Manager
