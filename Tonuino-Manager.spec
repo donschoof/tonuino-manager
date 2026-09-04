@@ -8,17 +8,34 @@ Plattformgrenzen hinweg (ein Windows-Build erzeugt keine Linux/macOS-Binary
 und umgekehrt).
 """
 
+import re
 import sys
+from pathlib import Path
+
 import imageio_ffmpeg
 
 block_cipher = None
 
-# .ico ist ein Windows-Format (Multi-Resolution-Icon fuer die EXE). Auf Linux
-# ignoriert PyInstaller den icon-Parameter fuer EXE() ohnehin (ELF-Binaries
-# betten keine Icons ein - die Desktop-Integration erfolgt stattdessen ueber
-# eine .desktop-Datei + icon.png, siehe build_exe.py). macOS braucht ein
-# .icns fuer eine App-Bundle - das ist noch nicht eingerichtet.
-_icon = 'src/resources/icon.ico' if sys.platform == 'win32' else None
+# Einzige Quelle fuer die Versionsnummer (siehe src/core/__init__.py) - wird
+# unten fuer den CFBundleVersion/CFBundleShortVersionString der macOS-App
+# gebraucht (PyInstaller kompiliert build_exe.py's get_version() hier nicht
+# mit, daher die eigene, minimale Regex-Lektuere).
+def _get_version() -> str:
+    init_file = Path('src/core/__init__.py').read_text(encoding='utf-8')
+    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_file)
+    return match.group(1) if match else '0.0.0'
+
+# .ico ist ein Windows-Format (Multi-Resolution-Icon fuer die EXE), .icns das
+# macOS-Pendant fuer die App-Bundle. Auf Linux ignoriert PyInstaller den
+# icon-Parameter fuer EXE() ohnehin (ELF-Binaries betten keine Icons ein - die
+# Desktop-Integration erfolgt stattdessen ueber eine .desktop-Datei +
+# icon.png, siehe build_exe.py).
+if sys.platform == 'win32':
+    _icon = 'src/resources/icon.ico'
+elif sys.platform == 'darwin':
+    _icon = 'src/resources/icon.icns'
+else:
+    _icon = None
 
 # Gebuendeltes FFmpeg (aus imageio-ffmpeg) mit ausliefern, damit die EXE ohne
 # separat installiertes FFmpeg funktioniert. Der Zielpfad spiegelt die
@@ -80,3 +97,25 @@ exe = EXE(
     entitlements_file=None,
     icon=_icon,
 )
+
+# Auf macOS wird zusaetzlich eine .app-Bundle gebraucht (das reine EXE()-Binary
+# waere nur ein Unix-Kommandozeilenprogramm, kein per Doppelklick startbares,
+# im Finder/Dock erkennbares Programm mit eigenem Icon). Unsigned - fuer eine
+# spaetere Codesignatur/Notarisierung (Voraussetzung fuer Verteilung ausserhalb
+# des eigenen Rechners ohne Gatekeeper-Warnung) waere ein Apple Developer
+# Account noetig, der hier nicht vorausgesetzt wird.
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        name='Tonuino-Manager.app',
+        icon=_icon,
+        bundle_identifier='de.tonuino-manager.app',
+        info_plist={
+            'CFBundleName': 'Tonuino-Manager',
+            'CFBundleDisplayName': 'Tonuino-Manager',
+            'CFBundleVersion': _get_version(),
+            'CFBundleShortVersionString': _get_version(),
+            'NSHighResolutionCapable': True,
+            'NSHumanReadableCopyright': 'Tonuino-Manager',
+        },
+    )
