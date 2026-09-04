@@ -3,8 +3,10 @@
 **Version 1.1.0**
 
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
+<img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
 
 **Plattformen**: Windows (Installer + portable EXE) und Linux (portable Programmdatei) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)). macOS ist (noch) nicht eingerichtet.
+
 
 ## Features
 
