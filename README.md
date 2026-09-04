@@ -1,9 +1,11 @@
 # Tonuino-Manager
 
-**Version 1.0.0**
+**Version 1.1.0**
 
-Ein hübsches Windows-Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
+Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
+
+**Plattformen**: Windows (Installer + portable EXE) und Linux (portable Programmdatei) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)). macOS ist (noch) nicht eingerichtet.
 
 
 ## Features
@@ -56,12 +58,29 @@ pip install -r requirements.txt
 python build_exe.py
 ```
 
-Die fertigen Dateien liegen danach im `dist`-Ordner:
+Auf Windows liegen danach im `dist`-Ordner:
 
 - `Tonuino-Manager.exe` – portabel, ohne Installation lauffähig
 - `Tonuino-Manager-Setup.exe` – Installer (falls Inno Setup gefunden wurde)
 
 Die Versionsnummer wird dabei automatisch aus `src/core/__init__.py` (`__version__`) übernommen.
+
+### Linux
+
+Zusätzlich zu Python 3.10+ und den pip-Abhängigkeiten wird der PC/SC-Stack für den RFID-Reader sowie das Qt-„xcb“-Plattform-Plugin benötigt (Debian/Ubuntu-Namen, für andere Distributionen entsprechend anpassen):
+
+```bash
+sudo apt install pcscd libpcsclite1 libxcb-cursor0
+pip install -r requirements.txt
+python build_exe.py
+```
+
+`build_exe.py` erkennt Linux automatisch und erzeugt statt des Windows-Installers:
+
+- `dist/Tonuino-Manager` – die portable Programmdatei
+- `dist/Tonuino-Manager-<Version>-linux-x86_64.tar.gz` – dieselbe Datei zusammen mit Icon und `.desktop`-Eintrag für die Desktop-Integration (z.B. nach `~/.local/share/applications/` kopieren)
+
+Der Linux-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)), um fehlende Systembibliotheken frühzeitig zu erkennen.
 
 ## SD-Karten-Format
 
@@ -100,3 +119,5 @@ Programmierbar sind:
 ## Lizenz
 
 MIT License
+
+Enthält [Material Icons](https://github.com/google/material-design-icons) (Apache License 2.0, siehe `src/resources/fonts/MaterialIcons-LICENSE.txt`) als gebündelte Icon-Schriftart – plattformneutrale Alternative zu den Windows-exklusiven Segoe Fluent Icons.
