@@ -5,7 +5,7 @@
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
 
-**Plattformen**: Windows (Installer + portable EXE) und Linux (portable Programmdatei) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)). macOS ist (noch) nicht eingerichtet.
+**Plattformen**: Windows (Installer + portable EXE) und Linux (.deb-Installer + portable Programmdatei) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)). macOS ist (noch) nicht eingerichtet.
 
 
 ## Features
@@ -17,7 +17,7 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 - **Automatische Ordnernamen & Cover**: Ordnername wird aus dem Album-Tag des ersten Tracks abgeleitet, das Cover aus dem eingebetteten ID3-Cover-Art der Tracks
 - **RFID-Programmierung**: Direkte Programmierung über den ACR122U-Reader – reguläre Ordnerkarten (mit Wiedergabemodus) und Admin-Karten, mit automatischer Kartentyp-Erkennung und Live-Status (Reader/Karte/Programmierstatus) in der Sidebar
 - **Modernes UI**: Dark Theme mit eigenem App-Icon
-- **Windows-Installer**: Optionaler Setup-Installer (Program Files, über „Apps & Features“ deinstallierbar) neben der portablen EXE
+- **Installer**: Optionaler Setup-Installer für Windows (Program Files, über „Apps & Features“ deinstallierbar) bzw. .deb-Paket für Linux (über `apt`/`dpkg` installier- und deinstallierbar), jeweils neben der portablen Programmdatei
 
 ## Installation
 
@@ -25,7 +25,7 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 
 Für Endanwender ohne Python-Installation:
 
-- **Installer** (`Tonuino-Manager-Setup.exe`): führt durch die Installation nach `Program Files`, legt Start­menü-/optional Desktop-Verknüpfungen an und lässt sich über *Einstellungen → Apps → Apps & Features* wieder deinstallieren.
+- **Installer** (`Tonuino-Manager-<Version>-Setup.exe`): führt durch die Installation nach `Program Files`, legt Start­menü-/optional Desktop-Verknüpfungen an und lässt sich über *Einstellungen → Apps → Apps & Features* wieder deinstallieren.
 - **Portable EXE** (`Tonuino-Manager.exe`): keine Installation nötig, einfach starten. FFmpeg ist bereits eingebettet.
 
 Beide Dateien werden mit `python build_exe.py` erzeugt (siehe unten) und landen im `dist`-Ordner.
@@ -61,7 +61,7 @@ python build_exe.py
 Auf Windows liegen danach im `dist`-Ordner:
 
 - `Tonuino-Manager.exe` – portabel, ohne Installation lauffähig
-- `Tonuino-Manager-Setup.exe` – Installer (falls Inno Setup gefunden wurde)
+- `Tonuino-Manager-<Version>-Setup.exe` – Installer (falls Inno Setup gefunden wurde)
 
 Die Versionsnummer wird dabei automatisch aus `src/core/__init__.py` (`__version__`) übernommen.
 
@@ -78,7 +78,9 @@ python build_exe.py
 `build_exe.py` erkennt Linux automatisch und erzeugt statt des Windows-Installers:
 
 - `dist/Tonuino-Manager` – die portable Programmdatei
-- `dist/Tonuino-Manager-<Version>-linux-x86_64.tar.gz` – dieselbe Datei zusammen mit Icon und `.desktop`-Eintrag für die Desktop-Integration (z.B. nach `~/.local/share/applications/` kopieren)
+- `dist/tonuino-manager_<Version>_amd64.deb` – Installer für Debian/Ubuntu-basierte Distributionen (Menüeintrag, Icon-Integration); Installation über `sudo apt install ./tonuino-manager_<Version>_amd64.deb`, Deinstallation über `sudo apt remove tonuino-manager`
+
+Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich stattdessen direkt `dist/Tonuino-Manager` portabel ausführen.
 
 Der Linux-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)), um fehlende Systembibliotheken frühzeitig zu erkennen.
 
