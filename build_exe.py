@@ -107,61 +107,93 @@ def create_windows_installer():
         print("\n" + "="*50)
         print("ERFOLG! Installer erstellt.")
         print("="*50)
-        print("\nDer Installer befindet sich in: dist/Tonuino-Manager-Setup.exe")
+        print(f"\nDer Installer befindet sich in: dist/Tonuino-Manager-{version}-Setup.exe")
     else:
         print("\nFEHLER beim Erstellen des Installers!")
         sys.exit(1)
 
 
 def create_linux_package():
-    """Erstellt eine .desktop-Datei fuer die Desktop-Integration und packt
-    Programmdatei + Icon + .desktop-Datei in ein portables .tar.gz.
+    """Erstellt ein .deb-Paket (Menueintrag, Icon-Integration, sauberes
+    Deinstallieren via 'apt remove'/'dpkg -r') - analog zum Windows-Installer.
 
-    Bewusst kein AppImage/.deb/.rpm: diese Tools sind selbst nicht ueber pip
-    installierbar und muessten separat auf der Build-Maschine vorhanden sein
-    (aehnlich wie Inno Setup unter Windows) - das .tar.gz funktioniert ohne
-    weitere Abhaengigkeiten auf jeder Linux-Distribution."""
-    import tarfile
-
+    Bewusst kein AppImage: dafuer muesste appimagetool separat heruntergeladen
+    werden. dpkg-deb ist auf Debian/Ubuntu (und damit dem ubuntu-latest
+    CI-Runner) bereits Teil des Basissystems, genauso wie Inno Setup bereits
+    auf windows-latest vorinstalliert ist - kein zusaetzliches Tool noetig.
+    Einschraenkung: laeuft nativ nur auf Debian/Ubuntu-basierten Distros."""
     dist_dir = Path("dist")
     exe_name = binary_name()
     version = get_version()
+    package_name = "tonuino-manager"
+    arch = "amd64"
+
+    pkg_root = dist_dir / "deb-build"
+    if pkg_root.exists():
+        shutil.rmtree(pkg_root)
+
+    bin_dir = pkg_root / "usr" / "bin"
+    icon_dir = pkg_root / "usr" / "share" / "icons" / "hicolor" / "1024x1024" / "apps"
+    desktop_dir = pkg_root / "usr" / "share" / "applications"
+    debian_dir = pkg_root / "DEBIAN"
+    for directory in (bin_dir, icon_dir, desktop_dir, debian_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(dist_dir / exe_name, bin_dir / package_name)
+    os.chmod(bin_dir / package_name, 0o755)
+
+    icon_src = Path("src/resources/icon.png")
+    if icon_src.exists():
+        shutil.copy2(icon_src, icon_dir / f"{package_name}.png")
 
     desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=Tonuino-Manager
 Comment=Tonuino SD-Karten und RFID-Karten verwalten
-Exec={exe_name}
-Icon=icon
+Exec={package_name}
+Icon={package_name}
 Terminal=false
 Categories=AudioVideo;Audio;
 """
-    desktop_file = dist_dir / "tonuino-manager.desktop"
-    desktop_file.write_text(desktop_content, encoding="utf-8")
-    print("tonuino-manager.desktop erstellt")
+    (desktop_dir / f"{package_name}.desktop").write_text(desktop_content, encoding="utf-8")
 
-    icon_src = Path("src/resources/icon.png")
-    if icon_src.exists():
-        shutil.copy2(icon_src, dist_dir / "icon.png")
-        print("icon.png kopiert")
+    # Depends: pcscd/libpcsclite1 werden zur Laufzeit fuer den RFID-Zugriff
+    # (PC/SC-Stack) benoetigt, nicht nur zum Bauen - apt installiert sie beim
+    # Installieren des Pakets automatisch mit.
+    control_content = f"""Package: {package_name}
+Version: {version}
+Section: sound
+Priority: optional
+Architecture: {arch}
+Depends: pcscd, libpcsclite1
+Maintainer: Tonuino-Manager <tonuino-manager@localhost>
+Homepage: https://github.com/donschoof/tonuino-manager
+Description: Tonuino SD-Karten und RFID-Karten verwalten
+ Tonuino-Manager verwaltet SD-Karten (Ordner/Dateien fuer den DIY-Audio-
+ Player Tonuino) und die zugehoerigen RFID-Karten.
+"""
+    (debian_dir / "control").write_text(control_content, encoding="utf-8")
 
-    archive_name = f"Tonuino-Manager-{version}-linux-x86_64.tar.gz"
+    archive_name = f"{package_name}_{version}_{arch}.deb"
     archive_path = dist_dir / archive_name
-    with tarfile.open(archive_path, "w:gz") as tar:
-        tar.add(dist_dir / exe_name, arcname=exe_name)
-        tar.add(desktop_file, arcname="tonuino-manager.desktop")
-        if icon_src.exists():
-            tar.add(dist_dir / "icon.png", arcname="icon.png")
+    # --root-owner-group: setzt root:root-Eigentuemerschaft im Paket, ohne
+    # dass der Build selbst als root laufen muss (wichtig fuer CI ohne sudo).
+    result = subprocess.run(
+        ["dpkg-deb", "--build", "--root-owner-group", str(pkg_root), str(archive_path)],
+        capture_output=False,
+    )
+    shutil.rmtree(pkg_root)
+
+    if result.returncode != 0:
+        print("\nFEHLER beim Erstellen des .deb-Pakets!")
+        sys.exit(1)
 
     print("\n" + "="*50)
-    print("ERFOLG! Linux-Paket erstellt.")
+    print("ERFOLG! Linux-Installer (.deb) erstellt.")
     print("="*50)
-    print(f"\nArchiv: dist/{archive_name}")
-    print("Enthaelt die Programmdatei, ein Icon und eine .desktop-Datei fuer")
-    print("die Desktop-Integration (z.B. nach ~/.local/share/applications/")
-    print("kopieren, Programmdatei ausfuehrbar machen: chmod +x).")
-    print("\nHinweis: Fuer RFID-Support wird der PC/SC-Daemon benoetigt:")
-    print("  sudo apt install pcscd libpcsclite1")
+    print(f"\nPaket: dist/{archive_name}")
+    print(f"Installation: sudo apt install ./{archive_name}")
+    print(f"Deinstallation: sudo apt remove {package_name}")
 
 
 if __name__ == "__main__":
