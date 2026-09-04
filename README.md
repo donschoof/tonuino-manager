@@ -1,11 +1,11 @@
 # Tonuino-Manager
 
-**Version 1.1.0**
+**Version 1.2.0**
 
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
 
-**Plattformen**: Windows (Installer + portable EXE) und Linux (.deb-Installer + portable Programmdatei) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)). macOS ist (noch) nicht eingerichtet.
+**Plattformen**: Windows (Installer + portable EXE), Linux (.deb-Installer + portable Programmdatei) und macOS (.dmg + App-Bundle) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)).
 
 
 ## Features
@@ -17,7 +17,7 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 - **Automatische Ordnernamen & Cover**: Ordnername wird aus dem Album-Tag des ersten Tracks abgeleitet, das Cover aus dem eingebetteten ID3-Cover-Art der Tracks
 - **RFID-Programmierung**: Direkte Programmierung über den ACR122U-Reader – reguläre Ordnerkarten (mit Wiedergabemodus) und Admin-Karten, mit automatischer Kartentyp-Erkennung und Live-Status (Reader/Karte/Programmierstatus) in der Sidebar
 - **Modernes UI**: Dark Theme mit eigenem App-Icon
-- **Installer**: Optionaler Setup-Installer für Windows (Program Files, über „Apps & Features“ deinstallierbar) bzw. .deb-Paket für Linux (über `apt`/`dpkg` installier- und deinstallierbar), jeweils neben der portablen Programmdatei
+- **Installer**: Optionaler Setup-Installer für Windows (Program Files, über „Apps & Features“ deinstallierbar), .deb-Paket für Linux (über `apt`/`dpkg` installier- und deinstallierbar) bzw. .dmg-Abbild mit App-Bundle für macOS, jeweils neben der portablen Programmdatei
 
 ## Installation
 
@@ -83,6 +83,22 @@ python build_exe.py
 Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich stattdessen direkt `dist/Tonuino-Manager` portabel ausführen.
 
 Der Linux-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)), um fehlende Systembibliotheken frühzeitig zu erkennen.
+
+### macOS
+
+```bash
+pip install -r requirements.txt
+python build_exe.py
+```
+
+Der PC/SC-Stack für den RFID-Reader ist auf macOS bereits Teil des Systems (kein zusätzliches Paket nötig). `build_exe.py` erkennt macOS automatisch und erzeugt statt des Windows-Installers:
+
+- `dist/Tonuino-Manager.app` – die App-Bundle, direkt startbar (z. B. per Doppelklick oder nach Kopieren nach `/Applications`)
+- `dist/Tonuino-Manager-<Version>.dmg` – Abbild zur Verteilung: öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen
+
+Die App ist nicht signiert/notarisiert (dafür wäre ein Apple Developer Account nötig) – beim ersten Start blockiert Gatekeeper den Doppelklick-Start; per Rechtsklick auf `Tonuino-Manager.app` → „Öffnen“ lässt sie sich trotzdem einmalig freigeben.
+
+Der macOS-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)).
 
 ## SD-Karten-Format
 

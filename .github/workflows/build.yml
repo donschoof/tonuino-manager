@@ -1,13 +1,14 @@
 name: Build
 
-# Baut Tonuino-Manager auf Windows und Linux und macht damit den plattform-
-# uebergreifenden Support tatsaechlich ueberpruefbar (PyInstaller kompiliert
-# nicht plattformuebergreifend - ein Windows-Build allein sagt nichts darueber
-# aus, ob die App auf Linux funktioniert).
+# Baut Tonuino-Manager auf Windows, Linux und macOS und macht damit den
+# plattformuebergreifenden Support tatsaechlich ueberpruefbar (PyInstaller
+# kompiliert nicht plattformuebergreifend - ein Windows-Build allein sagt
+# nichts darueber aus, ob die App auf Linux/macOS funktioniert).
 #
 # Der Linux-Job baut nicht nur, sondern startet die App zusaetzlich headless
 # (via xvfb) und instanziiert das Hauptfenster, um fehlende Systembibliotheken
-# (Qt xcb-Plugin, PC/SC) fruehzeitig zu erkennen.
+# (Qt xcb-Plugin, PC/SC) fruehzeitig zu erkennen. Der macOS-Job macht denselben
+# Smoketest ohne xvfb (der WindowServer ist auf den Runnern bereits vorhanden).
 
 on:
   push:
@@ -25,6 +26,8 @@ jobs:
             name: windows
           - os: ubuntu-latest
             name: linux
+          - os: macos-latest
+            name: macos
 
     runs-on: ${{ matrix.os }}
 
@@ -63,6 +66,23 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           xvfb-run --auto-servernum python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from PyQt6.QtWidgets import QApplication
+          app = QApplication(sys.argv)
+          from gui.styles import MAIN_STYLESHEET
+          app.setStyleSheet(MAIN_STYLESHEET)
+          from gui.main_window import MainWindow
+          window = MainWindow()
+          window.show()
+          app.processEvents()
+          print('MainWindow erfolgreich erstellt und angezeigt - kein Crash.')
+          "
+
+      - name: Headless-Smoketest (macOS)
+        if: matrix.name == 'macos'
+        run: |
+          python -c "
           import sys
           sys.path.insert(0, 'src')
           from PyQt6.QtWidgets import QApplication

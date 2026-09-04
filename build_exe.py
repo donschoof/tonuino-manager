@@ -196,6 +196,63 @@ Description: Tonuino SD-Karten und RFID-Karten verwalten
     print(f"Deinstallation: sudo apt remove {package_name}")
 
 
+def create_macos_package():
+    """Erstellt ein .dmg-Abbild mit der App-Bundle und einem Alias auf
+    /Applications (Standard-Verteilungsformat auf macOS: Nutzer oeffnen das
+    .dmg und ziehen die App per Drag & Drop nach /Applications) - analog zum
+    Windows-Installer bzw. .deb-Paket.
+
+    hdiutil ist Teil jedes macOS-Systems (auch des macos-latest CI-Runners),
+    kein Zusatz-Tool noetig. Unsigned/nicht notarisiert - beim ersten Start
+    muss der Nutzer die Gatekeeper-Warnung ueber Rechtsklick > "Oeffnen"
+    bestaetigen; eine Codesignatur wuerde einen Apple Developer Account
+    voraussetzen."""
+    dist_dir = Path("dist")
+    version = get_version()
+    app_name = "Tonuino-Manager.app"
+    app_path = dist_dir / app_name
+
+    if not app_path.exists():
+        print(f"\nFEHLER: {app_path} nicht gefunden - App-Bundle wurde nicht erstellt.")
+        sys.exit(1)
+
+    dmg_root = dist_dir / "dmg-build"
+    if dmg_root.exists():
+        shutil.rmtree(dmg_root)
+    dmg_root.mkdir(parents=True)
+
+    shutil.copytree(app_path, dmg_root / app_name)
+    os.symlink("/Applications", dmg_root / "Applications")
+
+    archive_name = f"Tonuino-Manager-{version}.dmg"
+    archive_path = dist_dir / archive_name
+    if archive_path.exists():
+        archive_path.unlink()
+
+    print(f"Erstelle DMG-Abbild (Version {version})...")
+    result = subprocess.run(
+        [
+            "hdiutil", "create",
+            "-volname", "Tonuino-Manager",
+            "-srcfolder", str(dmg_root),
+            "-ov", "-format", "UDZO",
+            str(archive_path),
+        ],
+        capture_output=False,
+    )
+    shutil.rmtree(dmg_root)
+
+    if result.returncode != 0:
+        print("\nFEHLER beim Erstellen des .dmg-Abbilds!")
+        sys.exit(1)
+
+    print("\n" + "="*50)
+    print("ERFOLG! macOS-Installer (.dmg) erstellt.")
+    print("="*50)
+    print(f"\nAbbild: dist/{archive_name}")
+    print(f"Installation: .dmg oeffnen und {app_name} nach /Applications ziehen")
+
+
 if __name__ == "__main__":
     print("="*50)
     print(f"  Tonuino-Manager {get_version()} - Build")
@@ -213,6 +270,8 @@ if __name__ == "__main__":
         create_windows_installer()
     elif sys.platform.startswith("linux"):
         create_linux_package()
+    elif sys.platform == "darwin":
+        create_macos_package()
     else:
         print(f"\nHINWEIS: Keine Paketierung fuer Plattform '{sys.platform}' "
               "eingerichtet - nur die Programmdatei wurde erstellt.")
