@@ -1,11 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 PyInstaller Spec-Datei fuer Tonuino-Manager
+
+Funktioniert plattformuebergreifend (Windows/Linux/macOS), muss aber auf jeder
+Zielplattform separat gebaut werden - PyInstaller kompiliert nicht ueber
+Plattformgrenzen hinweg (ein Windows-Build erzeugt keine Linux/macOS-Binary
+und umgekehrt).
 """
 
+import sys
 import imageio_ffmpeg
 
 block_cipher = None
+
+# .ico ist ein Windows-Format (Multi-Resolution-Icon fuer die EXE). Auf Linux
+# ignoriert PyInstaller den icon-Parameter fuer EXE() ohnehin (ELF-Binaries
+# betten keine Icons ein - die Desktop-Integration erfolgt stattdessen ueber
+# eine .desktop-Datei + icon.png, siehe build_exe.py). macOS braucht ein
+# .icns fuer eine App-Bundle - das ist noch nicht eingerichtet.
+_icon = 'src/resources/icon.ico' if sys.platform == 'win32' else None
 
 # Gebuendeltes FFmpeg (aus imageio-ffmpeg) mit ausliefern, damit die EXE ohne
 # separat installiertes FFmpeg funktioniert. Der Zielpfad spiegelt die
@@ -65,5 +78,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src/resources/icon.ico',
+    icon=_icon,
 )

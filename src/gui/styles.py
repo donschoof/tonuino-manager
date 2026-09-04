@@ -345,12 +345,13 @@ QFrame#cardFrame {
 }
 
 /* === RFID-Status ===
-   Alle drei Status-Icons nutzen dieselbe Icon-Schriftart (Segoe Fluent Icons /
-   Segoe MDL2 Assets) in derselben Groesse, damit sie einheitlich aussehen -
-   unabhaengig vom jeweiligen Glyph. Die Boxgroesse wird zusaetzlich fix in
-   main_window.py gesetzt (setFixedSize), die Farbe je nach Status hier. */
+   Alle drei Status-Icons nutzen dieselbe Icon-Schriftart (Material Icons,
+   Apache-2.0, gebuendelt in resources/fonts/ - siehe main.py) in derselben
+   Groesse, damit sie einheitlich aussehen - unabhaengig vom jeweiligen Glyph
+   und plattformneutral (Windows/macOS/Linux). Die Boxgroesse wird zusaetzlich
+   fix in main_window.py gesetzt (setFixedSize), die Farbe je nach Status hier. */
 QLabel#statusIcon {
-    font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+    font-family: "Material Icons";
     font-size: 22pt;
     color: #585b70;
 }

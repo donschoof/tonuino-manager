@@ -24,7 +24,7 @@ if src_dir not in sys.path:
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QFontDatabase
 from core import __version__
 from gui.main_window import MainWindow
 
@@ -42,6 +42,14 @@ def main():
     icon_path = os.path.join(src_dir, "resources", "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
+
+    # Icon-Schriftart bundlen (Material Icons, Apache-2.0) statt der
+    # Windows-exklusiven Segoe Fluent Icons/Segoe MDL2 Assets zu verwenden -
+    # macht die Button-/Status-Icons auf allen Plattformen (Windows/macOS/
+    # Linux) gleichermassen sichtbar, siehe gui/main_window.py.
+    icon_font_path = os.path.join(src_dir, "resources", "fonts", "MaterialIcons-Regular.ttf")
+    if os.path.exists(icon_font_path):
+        QFontDatabase.addApplicationFont(icon_font_path)
 
     # Stylesheet laden
     from gui.styles import MAIN_STYLESHEET

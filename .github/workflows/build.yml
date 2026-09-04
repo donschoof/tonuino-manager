@@ -1,0 +1,85 @@
+name: Build
+
+# Baut Tonuino-Manager auf Windows und Linux und macht damit den plattform-
+# uebergreifenden Support tatsaechlich ueberpruefbar (PyInstaller kompiliert
+# nicht plattformuebergreifend - ein Windows-Build allein sagt nichts darueber
+# aus, ob die App auf Linux funktioniert).
+#
+# Der Linux-Job baut nicht nur, sondern startet die App zusaetzlich headless
+# (via xvfb) und instanziiert das Hauptfenster, um fehlende Systembibliotheken
+# (Qt xcb-Plugin, PC/SC) fruehzeitig zu erkennen.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-latest
+            name: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: System-Abhaengigkeiten installieren (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          # pcscd/libpcsclite-dev: PC/SC-Stack fuer pyscard (RFID-Reader-Zugriff)
+          # swig: wird von pyscard benoetigt, falls aus dem Quellcode gebaut wird
+          # libxcb-cursor0 & Co: Qt6 "xcb"-Plattform-Plugin (haeufigste Ursache
+          #   fuer "could not load the Qt platform plugin" auf frischen Linux-Systemen)
+          # xvfb: virtueller Display-Server fuer den headless GUI-Smoketest
+          sudo apt-get install -y \
+            pcscd libpcsclite-dev libpcsclite1 swig \
+            libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libegl1 \
+            xvfb
+
+      - name: Python-Abhaengigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build ausfuehren
+        run: python build_exe.py
+
+      - name: Headless-Smoketest (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          xvfb-run --auto-servernum python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from PyQt6.QtWidgets import QApplication
+          app = QApplication(sys.argv)
+          from gui.styles import MAIN_STYLESHEET
+          app.setStyleSheet(MAIN_STYLESHEET)
+          from gui.main_window import MainWindow
+          window = MainWindow()
+          window.show()
+          app.processEvents()
+          print('MainWindow erfolgreich erstellt und angezeigt - kein Crash.')
+          "
+
+      - name: Artefakte hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: tonuino-manager-${{ matrix.name }}
+          path: |
+            dist/*
+          if-no-files-found: error

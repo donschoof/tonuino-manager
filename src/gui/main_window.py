@@ -292,15 +292,15 @@ class MainWindow(QMainWindow):
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
 
-        # Einheitliche Icons aus Segoe Fluent Icons / Segoe MDL2 Assets (Windows-Icon-Font):
-        # U+E88E = USB, U+E963 = SmartCard, U+E8B7 = Folder
-        reader_tile, self.reader_icon = self._create_status_tile("", "Reader")
+        # Einheitliche Icons aus Material Icons (Apache-2.0, gebuendelt) statt
+        # der Windows-exklusiven Segoe Fluent Icons - funktioniert plattformneutral
+        reader_tile, self.reader_icon = self._create_status_tile("", "Reader")
         status_row.addWidget(reader_tile)
 
-        card_tile, self.card_icon = self._create_status_tile("", "Karte")
+        card_tile, self.card_icon = self._create_status_tile("", "Karte")
         status_row.addWidget(card_tile)
 
-        programmed_tile, self.programmed_icon = self._create_status_tile("", "Ordner")
+        programmed_tile, self.programmed_icon = self._create_status_tile("", "Ordner")
         status_row.addWidget(programmed_tile)
 
         rfid_layout.addLayout(status_row)
@@ -354,14 +354,16 @@ class MainWindow(QMainWindow):
         icon_label.style().polish(icon_label)
 
     def _icon_from_glyph(self, glyph: str, color: str = "#1e1e2e", size: int = 16) -> QIcon:
-        """Rendert ein Glyph aus Segoe Fluent Icons/Segoe MDL2 Assets als QIcon,
-        damit es (anders als reiner Text) mit setIcon() auf Buttons benutzt
-        werden kann, ohne die restliche Button-Schrift zu beeinflussen."""
+        """Rendert ein Glyph aus der gebuendelten Material-Icons-Schriftart als
+        QIcon, damit es (anders als reiner Text) mit setIcon() auf Buttons
+        benutzt werden kann, ohne die restliche Button-Schrift zu beeinflussen.
+        Material Icons (Apache-2.0) statt der Windows-exklusiven Segoe Fluent
+        Icons, damit die App auch unter macOS/Linux funktioniert."""
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(pixmap)
-        font = QFont("Segoe Fluent Icons")
+        font = QFont("Material Icons")
         font.setPointSize(int(size * 0.65))
         painter.setFont(font)
         painter.setPen(QColor(color))
@@ -409,13 +411,13 @@ class MainWindow(QMainWindow):
         
         btn_add_tracks = QPushButton(" Tracks hinzufuegen")
         btn_add_tracks.setObjectName("primaryButton")
-        btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
+        btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
         btn_add_tracks.clicked.connect(self._add_tracks)
         header_layout.addWidget(btn_add_tracks)
 
         btn_delete_folder = QPushButton(" Ordner loeschen")
         btn_delete_folder.setObjectName("dangerButton")
-        btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         btn_delete_folder.clicked.connect(self._delete_folder)
         header_layout.addWidget(btn_delete_folder)
 
@@ -444,14 +446,14 @@ class MainWindow(QMainWindow):
         track_header_layout.addStretch()
 
         self.btn_move_track_up = QPushButton()
-        self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
+        self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
         self.btn_move_track_up.setToolTip("Ausgewaehlten Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
         self.btn_move_track_up.clicked.connect(lambda: self._move_current_track(-1))
         track_header_layout.addWidget(self.btn_move_track_up)
 
         self.btn_move_track_down = QPushButton()
-        self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
+        self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
         self.btn_move_track_down.setToolTip("Ausgewaehlten Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
         self.btn_move_track_down.clicked.connect(lambda: self._move_current_track(1))
@@ -459,7 +461,7 @@ class MainWindow(QMainWindow):
 
         self.btn_delete_tracks = QPushButton(" Auswahl loeschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
-        self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
