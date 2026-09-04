@@ -1,6 +1,6 @@
 # Tonuino-Manager
 
-**Version 1.1.0**
+**Version 1.2.0**
 
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
