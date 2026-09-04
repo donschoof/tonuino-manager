@@ -65,7 +65,14 @@ def create_exe():
         print("\n" + "="*50)
         print("ERFOLG! Programmdatei erstellt.")
         print("="*50)
-        print(f"\nDie Datei befindet sich in: dist/{binary_name()}")
+        if sys.platform == "darwin":
+            # macOS baut im onedir-Modus (PyInstaller-Vorgabe fuer .app-Bundles,
+            # siehe Tonuino-Manager.spec) - dist/Tonuino-Manager ist hier ein
+            # Ordner, die eigentliche App entsteht als dist/Tonuino-Manager.app.
+            print("\nDer Programmordner befindet sich in: dist/Tonuino-Manager/")
+            print("Die App-Bundle wird daraus erstellt in: dist/Tonuino-Manager.app")
+        else:
+            print(f"\nDie Datei befindet sich in: dist/{binary_name()}")
     else:
         print("\nFEHLER beim Erstellen der Programmdatei!")
         sys.exit(1)
