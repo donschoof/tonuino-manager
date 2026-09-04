@@ -75,38 +75,49 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='Tonuino-Manager',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=_icon,
-)
-
-# Auf macOS wird zusaetzlich eine .app-Bundle gebraucht (das reine EXE()-Binary
-# waere nur ein Unix-Kommandozeilenprogramm, kein per Doppelklick startbares,
-# im Finder/Dock erkennbares Programm mit eigenem Icon). Unsigned - fuer eine
-# spaetere Codesignatur/Notarisierung (Voraussetzung fuer Verteilung ausserhalb
-# des eigenen Rechners ohne Gatekeeper-Warnung) waere ein Apple Developer
-# Account noetig, der hier nicht vorausgesetzt wird.
+# macOS braucht eine .app-Bundle (das reine EXE()-Binary waere nur ein Unix-
+# Kommandozeilenprogramm, kein per Doppelklick startbares, im Finder/Dock
+# erkennbares Programm mit eigenem Icon) - und PyInstaller unterstuetzt fuer
+# .app-Bundles nur noch den onedir-Modus (EXE mit exclude_binaries=True +
+# COLLECT + BUNDLE); onefile+windowed+.app wirft eine Deprecation-Warnung und
+# wird ab PyInstaller 7.0 ein Fehler. Windows/Linux bleiben bei onefile (eine
+# einzelne portable Datei, kein Ordner).
 if sys.platform == 'darwin':
-    app = BUNDLE(
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='Tonuino-Manager',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=_icon,
+    )
+
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name='Tonuino-Manager',
+    )
+
+    # Unsigned - fuer eine spaetere Codesignatur/Notarisierung (Voraussetzung
+    # fuer Verteilung ausserhalb des eigenen Rechners ohne Gatekeeper-Warnung)
+    # waere ein Apple Developer Account noetig, der hier nicht vorausgesetzt wird.
+    app = BUNDLE(
+        coll,
         name='Tonuino-Manager.app',
         icon=_icon,
         bundle_identifier='de.tonuino-manager.app',
@@ -118,4 +129,27 @@ if sys.platform == 'darwin':
             'NSHighResolutionCapable': True,
             'NSHumanReadableCopyright': 'Tonuino-Manager',
         },
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='Tonuino-Manager',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=_icon,
     )
