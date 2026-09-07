@@ -65,6 +65,15 @@ jobs:
       - name: Build ausfuehren
         run: python build_exe.py
 
+      # Beide Smoketests lassen die Event-Loop kurz laufen (app.exec() statt
+      # nur processEvents()) und schliessen das Fenster ueber window.close(),
+      # bevor der Prozess endet - damit durchlaeuft QMediaPlayer/QAudioOutput
+      # (Audio-Player) denselben Qt-eigenen Init-/Teardown-Pfad wie im echten
+      # Programmablauf. Ohne laufende Event-Loop wird auf macOS das native
+      # CoreAudio-Backend nie sauber initialisiert und stuerzt beim abrupten
+      # Prozessende (CPython-GC-Reihenfolge statt Qt-Objektbaum-Teardown) mit
+      # einem Segfault ab (kein Problem fuer echte Nutzer, die immer app.exec()
+      # durchlaufen - nur ein Artefakt eines zu kurzen Smoketests).
       - name: Headless-Smoketest (Linux)
         if: matrix.name == 'linux'
         run: |
@@ -72,14 +81,17 @@ jobs:
           import sys
           sys.path.insert(0, 'src')
           from PyQt6.QtWidgets import QApplication
+          from PyQt6.QtCore import QTimer
           app = QApplication(sys.argv)
           from gui.styles import MAIN_STYLESHEET
           app.setStyleSheet(MAIN_STYLESHEET)
           from gui.main_window import MainWindow
           window = MainWindow()
           window.show()
-          app.processEvents()
           print('MainWindow erfolgreich erstellt und angezeigt - kein Crash.')
+          QTimer.singleShot(500, window.close)
+          QTimer.singleShot(700, app.quit)
+          sys.exit(app.exec())
           "
 
       - name: Headless-Smoketest (macOS)
@@ -89,14 +101,17 @@ jobs:
           import sys
           sys.path.insert(0, 'src')
           from PyQt6.QtWidgets import QApplication
+          from PyQt6.QtCore import QTimer
           app = QApplication(sys.argv)
           from gui.styles import MAIN_STYLESHEET
           app.setStyleSheet(MAIN_STYLESHEET)
           from gui.main_window import MainWindow
           window = MainWindow()
           window.show()
-          app.processEvents()
           print('MainWindow erfolgreich erstellt und angezeigt - kein Crash.')
+          QTimer.singleShot(500, window.close)
+          QTimer.singleShot(700, app.quit)
+          sys.exit(app.exec())
           "
 
       - name: Artefakte hochladen
