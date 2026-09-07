@@ -358,7 +358,7 @@ class RFIDReader:
             return False
         
         if len(data) != 16:
-            raise ValueError("Daten muessen genau 16 Bytes sein")
+            raise ValueError("Daten müssen genau 16 Bytes sein")
         
         try:
             if key:

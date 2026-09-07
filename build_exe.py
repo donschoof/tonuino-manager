@@ -165,19 +165,20 @@ Categories=AudioVideo;Audio;
     (desktop_dir / f"{package_name}.desktop").write_text(desktop_content, encoding="utf-8")
 
     # Depends: pcscd/libpcsclite1 werden zur Laufzeit fuer den RFID-Zugriff
-    # (PC/SC-Stack) benoetigt, nicht nur zum Bauen - apt installiert sie beim
-    # Installieren des Pakets automatisch mit.
+    # (PC/SC-Stack) benoetigt, libpulse0 fuer den Audio-Player (QtMultimedia) -
+    # nicht nur zum Bauen, apt installiert sie beim Installieren des Pakets
+    # automatisch mit.
     control_content = f"""Package: {package_name}
 Version: {version}
 Section: sound
 Priority: optional
 Architecture: {arch}
-Depends: pcscd, libpcsclite1
+Depends: pcscd, libpcsclite1, libpulse0
 Maintainer: Tonuino-Manager <tonuino-manager@localhost>
 Homepage: https://github.com/donschoof/tonuino-manager
 Description: Tonuino SD-Karten und RFID-Karten verwalten
- Tonuino-Manager verwaltet SD-Karten (Ordner/Dateien fuer den DIY-Audio-
- Player Tonuino) und die zugehoerigen RFID-Karten.
+ Tonuino-Manager verwaltet SD-Karten (Ordner/Dateien für den DIY-Audio-
+ Player Tonuino) und die zugehörigen RFID-Karten.
 """
     (debian_dir / "control").write_text(control_content, encoding="utf-8")
 
