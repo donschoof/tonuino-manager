@@ -210,10 +210,17 @@ def create_macos_package():
     Windows-Installer bzw. .deb-Paket.
 
     hdiutil ist Teil jedes macOS-Systems (auch des macos-latest CI-Runners),
-    kein Zusatz-Tool noetig. Unsigned/nicht notarisiert - beim ersten Start
-    muss der Nutzer die Gatekeeper-Warnung ueber Rechtsklick > "Oeffnen"
-    bestaetigen; eine Codesignatur wuerde einen Apple Developer Account
-    voraussetzen."""
+    kein Zusatz-Tool noetig. Die App wird vor dem Verpacken ad-hoc signiert
+    (kostenlos, kein Apple Developer Account noetig) - das ist NICHT dasselbe
+    wie eine echte Codesignatur: Gatekeeper zeigt beim ersten Start trotzdem
+    die "nicht verifizierter Entwickler"-Warnung, die sich nur per Rechtsklick
+    > "Oeffnen" umgehen laesst. Fuer eine echte Freigabe ohne diese Warnung
+    waeren ein kostenpflichtiger Apple Developer Account (99 $/Jahr) und
+    Notarization noetig. Der Nutzen der Ad-hoc-Signatur liegt anderswo: Auf
+    Apple Silicon (arm64) verlangt macOS ueberhaupt eine Signatur, um Code
+    auszufuehren, und eine explizite Signatur vermeidet "App ist beschaedigt"-
+    Fehler, die bei unsignierten, kopierten/verschobenen Bundles auftreten
+    koennen."""
     dist_dir = Path("dist")
     version = get_version()
     app_name = "Tonuino-Manager.app"
@@ -221,6 +228,15 @@ def create_macos_package():
 
     if not app_path.exists():
         print(f"\nFEHLER: {app_path} nicht gefunden - App-Bundle wurde nicht erstellt.")
+        sys.exit(1)
+
+    print("Signiere App-Bundle (ad-hoc, kein Apple Developer Account noetig)...")
+    result = subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],
+        capture_output=False,
+    )
+    if result.returncode != 0:
+        print("\nFEHLER beim Signieren des App-Bundles!")
         sys.exit(1)
 
     dmg_root = dist_dir / "dmg-build"
