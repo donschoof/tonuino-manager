@@ -3,7 +3,9 @@ Hauptfenster des Tonuino-Managers
 """
 
 import os
+import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -11,17 +13,20 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QProgressBar, QSplitter, QInputDialog,
-    QAbstractItemView, QProgressDialog
+    QAbstractItemView, QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
+from core import __version__
 from core.sd_card import SDCard, Folder, Track
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader
 from core.tonuino_config import TonuinoConfigManager
+from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
+from gui.update_dialog import UpdateDialog
 
 
 def resource_path(*parts) -> str:
@@ -182,6 +187,7 @@ class MainWindow(QMainWindow):
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
         self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
+        self._rfid_card_programmed = False  # fuer die Freischaltung des Loeschen-Icons
 
         self._setup_ui()
         self._setup_statusbar()
@@ -191,10 +197,22 @@ class MainWindow(QMainWindow):
         self.rfid_timer = QTimer()
         self.rfid_timer.timeout.connect(self._check_rfid_card)
         self.rfid_timer.start(500)
-        
+
+        # SD-Karten-Timer: erkennt, wenn die geoeffnete SD-Karte (z.B. per
+        # USB/Kartenleser) waehrend der Nutzung entfernt wird, und setzt die
+        # UI dann sauber zurueck statt bei jedem weiteren Zugriff auf die
+        # verschwundenen Pfade Dateisystem-Fehler ins Log zu schreiben.
+        self.sd_card_timer = QTimer()
+        self.sd_card_timer.timeout.connect(self._check_sd_card_presence)
+        self.sd_card_timer.start(1000)
+
         # Automatische RFID-Reader-Verbindung beim Start
         QTimer.singleShot(500, self._auto_connect_rfid)
-    
+
+        # Update-Pruefung beim Start (versetzt, damit sie nicht mit der
+        # RFID-Verbindung um Systemressourcen konkurriert)
+        QTimer.singleShot(1500, self._check_for_updates)
+
     def _auto_connect_rfid(self):
         """Verbindet automatisch mit dem ersten verfuegbaren RFID-Reader"""
         if not self.rfid_reader.scard_available:
@@ -286,9 +304,25 @@ class MainWindow(QMainWindow):
         rfid_layout = QVBoxLayout(rfid_frame)
         rfid_layout.setSpacing(10)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+
         rfid_title = QLabel("RFID-Karte")
         rfid_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        rfid_layout.addWidget(rfid_title)
+        title_row.addWidget(rfid_title)
+
+        title_row.addStretch()
+
+        self.erase_card_icon = ClickableLabel()
+        self.erase_card_icon.setFixedSize(24, 24)
+        self.erase_card_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.erase_card_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.erase_card_icon.setToolTip("Karten-Daten löschen")
+        self.erase_card_icon.clicked.connect(self._erase_rfid_card)
+        self._set_erase_icon_state(False)
+        title_row.addWidget(self.erase_card_icon)
+
+        rfid_layout.addLayout(title_row)
 
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
@@ -563,7 +597,45 @@ class MainWindow(QMainWindow):
                 "Fehler",
                 "Die SD-Karte konnte nicht gelesen werden."
             )
-    
+
+    def _check_sd_card_presence(self):
+        """Prueft periodisch, ob die geoeffnete SD-Karte noch vorhanden ist
+        (z.B. per USB/Kartenleser entfernt wurde)"""
+        if not self.sd_card:
+            return
+
+        try:
+            still_present = self.sd_card.path.exists()
+        except OSError:
+            still_present = False
+
+        if not still_present:
+            self._handle_sd_card_removed()
+
+    def _handle_sd_card_removed(self):
+        """Setzt die UI zurueck, nachdem die geoeffnete SD-Karte verschwunden
+        ist - verhindert, dass weitere Aktionen auf die nicht mehr
+        vorhandenen Pfade zugreifen und dabei Dateisystem-Fehler ins Log
+        schreiben."""
+        self.sd_card = None
+        self.config_manager = None
+        self.current_folder = None
+        self._folder_name_cache.clear()
+
+        self.folder_list.clear()
+        self.player_bar.stop_and_clear()
+        self.stack.setCurrentWidget(self.welcome_widget)
+        self.btn_new_folder.setEnabled(False)
+        self._update_program_buttons()
+
+        self.status_bar.showMessage("SD-Karte wurde entfernt")
+        QMessageBox.warning(
+            self,
+            "SD-Karte entfernt",
+            "Die SD-Karte ist nicht mehr verfügbar - wurde sie entfernt?\n\n"
+            "Bitte öffne sie erneut, sobald sie wieder verbunden ist."
+        )
+
     def _populate_folder_list(self):
         """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen"""
         self.folder_list.clear()
@@ -1029,6 +1101,7 @@ class MainWindow(QMainWindow):
         Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon."""
         self.btn_program_admin.setEnabled(self._rfid_card_present)
         self.btn_program_card.setEnabled(self._rfid_card_present and self.current_folder is not None)
+        self._set_erase_icon_state(self._rfid_card_present and self._rfid_card_programmed)
 
     def _update_card_status(self, present: bool):
         """Setzt Karten- und Programmiert-Icon auf den 'keine Karte'-Zustand zurueck"""
@@ -1036,6 +1109,7 @@ class MainWindow(QMainWindow):
             self._set_status_icon(self.card_icon, "neutral")
             self._set_status_icon(self.programmed_icon, "neutral")
             self._rfid_card_present = False
+            self._rfid_card_programmed = False
             self._update_program_buttons()
 
     def _check_rfid_card(self):
@@ -1078,18 +1152,21 @@ class MainWindow(QMainWindow):
                 self._set_status_icon(self.card_icon, "warning")
                 self._set_status_icon(self.programmed_icon, "neutral")
                 self._rfid_card_present = False
+                self._rfid_card_programmed = False
                 self._update_program_buttons()
                 return
 
             self._set_status_icon(self.card_icon, "ok")
             self._rfid_card_present = True
-            self._update_program_buttons()
 
             card_data = self.rfid_reader.read_tonuino_card()
+            self._rfid_card_programmed = bool(card_data)
             if card_data:
                 self._set_status_icon(self.programmed_icon, "ok")
             else:
                 self._set_status_icon(self.programmed_icon, "warning")
+
+            self._update_program_buttons()
 
         except Exception as e:
             # Fehler nur in der Statusleiste anzeigen, nicht als Popup
@@ -1225,6 +1302,160 @@ class MainWindow(QMainWindow):
                     "Fehler",
                     f"Fehler beim Programmieren: {e}"
                 )
+
+    def _set_erase_icon_state(self, enabled: bool):
+        """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
+        (nichts zu loeschen) und blockt Klicks im deaktivierten Zustand -
+        wie bei einem echten (aber unsichtbaren) Button."""
+        color = "#f38ba8" if enabled else "#585b70"
+        self.erase_card_icon.setPixmap(self._icon_from_glyph("", color=color, size=20).pixmap(20, 20))
+        self.erase_card_icon.setEnabled(enabled)
+
+    def _erase_rfid_card(self):
+        """Loescht die Tonuino-Daten der aufliegenden Karte unwiderruflich -
+        die Karte gilt danach wieder als unprogrammiert."""
+        if not self.rfid_reader.is_card_present():
+            QMessageBox.information(
+                self,
+                "Karte legen",
+                "Bitte lege eine Karte auf den Reader."
+            )
+            return
+
+        confirmed = confirm_action(
+            self,
+            "Karten-Daten löschen",
+            "Sollen alle Tonuino-Daten auf dieser Karte unwiderruflich gelöscht werden?"
+        )
+
+        if confirmed:
+            try:
+                success = self.rfid_reader.erase_tonuino_card()
+                if success:
+                    self.status_bar.showMessage("Karten-Daten erfolgreich gelöscht!")
+                    QMessageBox.information(
+                        self,
+                        "Erfolg",
+                        "Die Karten-Daten wurden erfolgreich gelöscht!"
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Fehler",
+                        "Die Karten-Daten konnten nicht gelöscht werden."
+                    )
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Fehler",
+                    f"Fehler beim Löschen: {e}"
+                )
+
+    UPDATE_CHECK_INTERVAL = timedelta(hours=24)
+
+    def _check_for_updates(self):
+        """Prueft im Hintergrund, ob eine neuere Version verfuegbar ist -
+        hoechstens einmal pro UPDATE_CHECK_INTERVAL, um die GitHub-API nicht
+        unnoetig oft anzufragen."""
+        settings = QSettings()
+        last_check = settings.value("updater/last_check_timestamp", "", type=str)
+        if last_check:
+            try:
+                if datetime.now() - datetime.fromisoformat(last_check) < self.UPDATE_CHECK_INTERVAL:
+                    return
+            except ValueError:
+                pass
+
+        self._update_checker = UpdateChecker(__version__)
+        self._update_checker.update_available.connect(self._on_update_available)
+        self._update_checker.no_update.connect(self._on_update_check_done)
+        self._update_checker.start()
+
+    def _on_update_check_done(self):
+        QSettings().setValue("updater/last_check_timestamp", datetime.now().isoformat())
+
+    def _on_update_available(self, info: UpdateInfo):
+        settings = QSettings()
+        settings.setValue("updater/last_check_timestamp", datetime.now().isoformat())
+
+        if settings.value("updater/ignored_version", "", type=str) == info.version:
+            return
+
+        dialog = UpdateDialog(info, __version__, self)
+        dialog.exec()
+
+        if dialog.result_choice == UpdateDialog.UPDATE_NOW:
+            self._start_update_download(info)
+        elif dialog.result_choice == UpdateDialog.IGNORE:
+            settings.setValue("updater/ignored_version", info.version)
+
+    def _start_update_download(self, info: UpdateInfo):
+        """Laedt den passenden Installer herunter, mit Fortschrittsanzeige"""
+        self._update_download_dialog = QProgressDialog(
+            f"Lade Update {info.version} herunter...", "Abbrechen", 0, 100, self
+        )
+        self._update_download_dialog.setWindowTitle("Update herunterladen")
+        self._update_download_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._update_download_dialog.setMinimumDuration(0)
+        self._update_download_dialog.setValue(0)
+
+        self._update_downloader = UpdateDownloader(info)
+        self._update_downloader.progress.connect(self._on_update_download_progress)
+        self._update_downloader.finished.connect(self._on_update_download_finished)
+        self._update_downloader.error.connect(self._on_update_download_error)
+        self._update_download_dialog.canceled.connect(self._update_downloader.cancel)
+
+        self._update_downloader.start()
+
+    def _on_update_download_progress(self, read: int, total: int):
+        if total > 0:
+            self._update_download_dialog.setMaximum(total)
+            self._update_download_dialog.setValue(read)
+        else:
+            self._update_download_dialog.setMaximum(0)
+
+    def _on_update_download_finished(self, filepath: str):
+        self._update_download_dialog.close()
+        self._launch_installer(filepath)
+
+    def _on_update_download_error(self, message: str):
+        self._update_download_dialog.close()
+        QMessageBox.warning(
+            self,
+            "Download fehlgeschlagen",
+            f"Das Update konnte nicht heruntergeladen werden:\n{message}\n\n"
+            f"Sie können es manuell herunterladen:\n{GITHUB_RELEASES_PAGE}"
+        )
+
+    def _launch_installer(self, filepath: str):
+        """Uebergibt den heruntergeladenen Installer an das Betriebssystem.
+        Unter Windows wird die App danach beendet, da installer.iss keine
+        CloseApplications-Direktive hat und der Installer die laufende, aus
+        Program Files gestartete EXE sonst nicht ueberschreiben kann. Unter
+        Linux/macOS bleibt die App offen - dort besteht kein Datei-Konflikt,
+        da .deb-Paketinstallation bzw. .dmg-Mounten die laufende Instanz nicht
+        beruehren."""
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(filepath)
+                QApplication.instance().quit()
+            elif sys.platform.startswith("linux"):
+                subprocess.Popen(["xdg-open", filepath])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", filepath])
+            else:
+                self._show_update_manual_fallback(filepath)
+        except Exception:
+            self._show_update_manual_fallback(filepath)
+
+    def _show_update_manual_fallback(self, filepath: str):
+        QMessageBox.information(
+            self,
+            "Manuelle Installation erforderlich",
+            f"Die Installationsdatei wurde heruntergeladen nach:\n{filepath}\n\n"
+            f"Bitte führen Sie die Datei manuell aus, oder laden Sie sie erneut "
+            f"herunter unter:\n{GITHUB_RELEASES_PAGE}"
+        )
 
     def closeEvent(self, event):
         """Wird beim Schliessen aufgerufen"""

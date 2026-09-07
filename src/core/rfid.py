@@ -407,8 +407,11 @@ class RFIDReader:
             raise ValueError("Page muss genau 4 Bytes enthalten")
 
         try:
-            # Update Binary (Ultralight/NTAG Page-Write): FF D2 00 [Page] 00 [4 Bytes Data]
-            cmd = [0xFF, 0xD2, 0x00, page, 0x00] + data
+            # Update Binary (Ultralight/NTAG Page-Write): FF D6 00 [Page] 04 [4 Bytes Data]
+            # (dieselbe PC/SC-Pseudo-APDU wie write_block() fuer MIFARE Classic, nur mit
+            # Page statt Block und Lc=4 statt 16 - INS D2 mit Lc=0 war falsch und lieferte
+            # bei jedem Schreibversuch SW1=0x63/SW2=0x00 zurueck)
+            cmd = [0xFF, 0xD6, 0x00, page, 0x04] + data
             response, sw1, sw2 = self._transmit(cmd)
 
             if sw1 == 0x90 and sw2 == 0x00:
@@ -427,8 +430,11 @@ class RFIDReader:
             return None
 
         try:
-            # Read Binary (Ultralight/NTAG Page-Read): FF B0 00 [Page] 00 04
-            cmd = [0xFF, 0xB0, 0x00, page, 0x00, 0x04]
+            # Read Binary (Ultralight/NTAG Page-Read): FF B0 00 [Page] 04
+            # (dieselbe PC/SC-Pseudo-APDU wie read_block() fuer MIFARE Classic, nur mit
+            # Page statt Block und Le=4 statt 16 - die zusaetzliche 0x00 vor dem Le-Byte
+            # war falsch und lieferte bei jedem Lesezugriff SW1=0x63/SW2=0x00 zurueck)
+            cmd = [0xFF, 0xB0, 0x00, page, 0x04]
             response, sw1, sw2 = self._transmit(cmd)
 
             if sw1 == 0x90 and sw2 == 0x00 and response:
@@ -526,6 +532,13 @@ class RFIDReader:
         """Programmiert eine TonUINO-Admin-Karte (folder=0, mode=admin_card)"""
         block_data = self._build_tonuino_block(0, self.ADMIN_CARD_MODE, 0, 0)
         return self._write_tonuino_block(block_data, key)
+
+    def erase_tonuino_card(self, key: List[int] = None) -> bool:
+        """Loescht die Tonuino-Konfiguration einer Karte (ueberschreibt den
+        Datenblock mit Nullen, passend zum erkannten Kartentyp) - die Karte
+        gilt danach wieder als unprogrammiert (read_tonuino_card() findet
+        keinen gueltigen Cookie mehr)."""
+        return self._write_tonuino_block(bytes(16), key)
 
     def read_tonuino_card(self, key: List[int] = None) -> Optional[TonuinoCardData]:
         """Liest die Tonuino-Kartenkonfiguration, passend zum erkannten Kartentyp"""
