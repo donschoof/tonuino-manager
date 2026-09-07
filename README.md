@@ -96,7 +96,7 @@ Der PC/SC-Stack für den RFID-Reader ist auf macOS bereits Teil des Systems (kei
 - `dist/Tonuino-Manager.app` – die App-Bundle, direkt startbar (z. B. per Doppelklick oder nach Kopieren nach `/Applications`)
 - `dist/Tonuino-Manager-<Version>.dmg` – Abbild zur Verteilung: öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen
 
-Die App ist nicht signiert/notarisiert (dafür wäre ein Apple Developer Account nötig) – beim ersten Start blockiert Gatekeeper den Doppelklick-Start; per Rechtsklick auf `Tonuino-Manager.app` → „Öffnen“ lässt sie sich trotzdem einmalig freigeben.
+Die App wird beim Bauen ad-hoc signiert (kostenlos, ohne Apple Developer Account) – das verhindert „App ist beschädigt“-Fehler und macht sie auf Apple Silicon zuverlässig ausführbar, ersetzt aber keine echte Signatur: Gatekeeper zeigt beim ersten Start trotzdem die „nicht verifizierter Entwickler“-Warnung, da dafür ein kostenpflichtiges Apple Developer Program (99 $/Jahr) samt Notarization nötig wäre. Per Rechtsklick auf `Tonuino-Manager.app` → „Öffnen“ lässt sie sich trotzdem einmalig freigeben.
 
 Der macOS-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)).
 
