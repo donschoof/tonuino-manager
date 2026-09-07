@@ -176,8 +176,8 @@ Depends: pcscd, libpcsclite1
 Maintainer: Tonuino-Manager <tonuino-manager@localhost>
 Homepage: https://github.com/donschoof/tonuino-manager
 Description: Tonuino SD-Karten und RFID-Karten verwalten
- Tonuino-Manager verwaltet SD-Karten (Ordner/Dateien fuer den DIY-Audio-
- Player Tonuino) und die zugehoerigen RFID-Karten.
+ Tonuino-Manager verwaltet SD-Karten (Ordner/Dateien für den DIY-Audio-
+ Player Tonuino) und die zugehörigen RFID-Karten.
 """
     (debian_dir / "control").write_text(control_content, encoding="utf-8")
 

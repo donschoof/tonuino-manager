@@ -21,6 +21,7 @@ from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader
 from core.tonuino_config import TonuinoConfigManager
+from gui.audio_player import AudioPlayerBar
 
 
 def resource_path(*parts) -> str:
@@ -129,7 +130,7 @@ class TrackAddWorker(QThread):
             try:
                 if self.audio_converter.needs_conversion(filepath):
                     if not self.audio_converter.is_available:
-                        self.error.emit(os.path.basename(filepath), "FFmpeg ist nicht verfuegbar.")
+                        self.error.emit(os.path.basename(filepath), "FFmpeg ist nicht verfügbar.")
                         continue
                     self.audio_converter.convert_to_mp3(filepath, str(dest_path))
                 else:
@@ -391,7 +392,7 @@ class MainWindow(QMainWindow):
         info_label = QLabel(
             "Oeffne eine SD-Karte um zu beginnen.\n\n"
             "- Verwalte deine Tonuio-Ordner\n"
-            "- Fuege Musik hinzu mit automatischer Konvertierung\n"
+            "- Füge Musik hinzu mit automatischer Konvertierung\n"
             "- Bearbeite Metadaten und Cover\n"
             "- Programmiere RFID-Karten direkt"
         )
@@ -409,13 +410,13 @@ class MainWindow(QMainWindow):
         
         header_layout.addStretch()
         
-        btn_add_tracks = QPushButton(" Tracks hinzufuegen")
+        btn_add_tracks = QPushButton(" Tracks hinzufügen")
         btn_add_tracks.setObjectName("primaryButton")
         btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
         btn_add_tracks.clicked.connect(self._add_tracks)
         header_layout.addWidget(btn_add_tracks)
 
-        btn_delete_folder = QPushButton(" Ordner loeschen")
+        btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("dangerButton")
         btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         btn_delete_folder.clicked.connect(self._delete_folder)
@@ -431,14 +432,20 @@ class MainWindow(QMainWindow):
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
         self.cover_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cover_label.setToolTip("Klicken um das Cover zu aendern")
+        self.cover_label.setToolTip("Klicken um das Cover zu ändern")
         self.cover_label.clicked.connect(self._set_folder_cover)
         info_layout.addWidget(self.cover_label)
         
         self.folder_info = QLabel()
         self.folder_info.setObjectName("subtitleLabel")
-        info_layout.addWidget(self.folder_info, 1)
-        
+        info_layout.addWidget(self.folder_info)
+
+        self.player_bar = AudioPlayerBar()
+        self.player_bar.setMinimumWidth(280)
+        self.player_bar.prev_clicked.connect(self._play_previous_track)
+        self.player_bar.next_clicked.connect(self._play_next_track)
+        info_layout.addWidget(self.player_bar, 1)
+
         folder_layout.addLayout(info_layout)
 
         track_header_layout = QHBoxLayout()
@@ -447,19 +454,26 @@ class MainWindow(QMainWindow):
 
         self.btn_move_track_up = QPushButton()
         self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
-        self.btn_move_track_up.setToolTip("Ausgewaehlten Track nach oben verschieben")
+        self.btn_move_track_up.setToolTip("Ausgewählten Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
         self.btn_move_track_up.clicked.connect(lambda: self._move_current_track(-1))
         track_header_layout.addWidget(self.btn_move_track_up)
 
         self.btn_move_track_down = QPushButton()
         self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
-        self.btn_move_track_down.setToolTip("Ausgewaehlten Track nach unten verschieben")
+        self.btn_move_track_down.setToolTip("Ausgewählten Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
         self.btn_move_track_down.clicked.connect(lambda: self._move_current_track(1))
         track_header_layout.addWidget(self.btn_move_track_down)
 
-        self.btn_delete_tracks = QPushButton(" Auswahl loeschen")
+        self.btn_play_track = QPushButton(" Abspielen")
+        self.btn_play_track.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Play
+        self.btn_play_track.setToolTip("Ausgewählten Track anhören")
+        self.btn_play_track.setEnabled(False)
+        self.btn_play_track.clicked.connect(self._play_selected_track)
+        track_header_layout.addWidget(self.btn_play_track)
+
+        self.btn_delete_tracks = QPushButton(" Auswahl löschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
         self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         self.btn_delete_tracks.setEnabled(False)
@@ -474,7 +488,7 @@ class MainWindow(QMainWindow):
         self.track_list.currentItemChanged.connect(self._on_track_current_changed)
         self.track_list.itemChanged.connect(self._on_track_check_changed)
         folder_layout.addWidget(self.track_list)
-        
+
         self.stack = QStackedWidget()
         self.stack.addWidget(self.welcome_widget)
         self.stack.addWidget(self.folder_widget)
@@ -498,16 +512,16 @@ class MainWindow(QMainWindow):
     def _check_dependencies(self):
         """Prueft verfuegbare Abhaengigkeiten"""
         if not self.audio_converter.is_available:
-            self.status_bar.showMessage("FFmpeg nicht gefunden - Konvertierung nicht moeglich")
-        
+            self.status_bar.showMessage("FFmpeg nicht gefunden - Konvertierung nicht möglich")
+
         if not self.rfid_reader.scard_available:
-            self.status_bar.showMessage("pyscard nicht installiert - RFID nicht verfuegbar")
+            self.status_bar.showMessage("pyscard nicht installiert - RFID nicht verfügbar")
 
     def _open_sd_card(self):
         """Oeffnet eine SD-Karte"""
         path = QFileDialog.getExistingDirectory(
             self,
-            "SD-Karte auswaehlen",
+            "SD-Karte auswählen",
             "",
             QFileDialog.Option.ShowDirsOnly
         )
@@ -677,6 +691,11 @@ class MainWindow(QMainWindow):
         Jeder Track hat eine Checkbox zum Auswaehlen fuer das Loeschen mehrerer
         Tracks - unabhaengig von der normalen (Einzel-)Auswahl, die fuer die
         Nach-oben/unten-Buttons benutzt wird."""
+        # Player stoppen: die zugrunde liegenden Dateipfade koennen sich durch
+        # Hinzufuegen/Loeschen/Umsortieren aendern (Umbenennung auf fortlaufende
+        # Nummern), der aktuell geladene Pfad waere dann ungueltig
+        self.player_bar.stop_and_clear()
+
         self.track_list.blockSignals(True)
         self.track_list.clear()
         for track in folder.tracks:
@@ -755,7 +774,7 @@ class MainWindow(QMainWindow):
 
         files, _ = QFileDialog.getOpenFileNames(
             self,
-            "Audio-Dateien auswaehlen",
+            "Audio-Dateien auswählen",
             "",
             "Audio (*.mp3 *.wav *.flac *.ogg *.aac *.wma *.m4a *.opus);;Alle (*)"
         )
@@ -801,12 +820,12 @@ class MainWindow(QMainWindow):
         self._folder_name_cache.pop(self.current_folder.index, None)
         self._show_folder(self.current_folder)
         self._populate_folder_list()
-        self.status_bar.showMessage(f"{added_count} Track(s) hinzugefuegt")
+        self.status_bar.showMessage(f"{added_count} Track(s) hinzugefügt")
 
         if self._add_tracks_errors:
             QMessageBox.warning(
                 self,
-                "Einige Tracks konnten nicht hinzugefuegt werden",
+                "Einige Tracks konnten nicht hinzugefügt werden",
                 "\n".join(self._add_tracks_errors)
             )
 
@@ -820,13 +839,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Keine Tracks",
-                "Dieser Ordner hat noch keine Tracks - bitte zuerst Tracks hinzufuegen."
+                "Dieser Ordner hat noch keine Tracks - bitte zuerst Tracks hinzufügen."
             )
             return
 
         filepath, _ = QFileDialog.getOpenFileName(
             self,
-            "Cover-Bild auswaehlen",
+            "Cover-Bild auswählen",
             "",
             "Bilder (*.jpg *.png *.jpeg);;Alle (*)"
         )
@@ -854,7 +873,7 @@ class MainWindow(QMainWindow):
                 os.remove(tmp_path)
 
             self._show_folder(self.current_folder)
-            self.status_bar.showMessage(f"Cover fuer {updated} Track(s) aktualisiert")
+            self.status_bar.showMessage(f"Cover für {updated} Track(s) aktualisiert")
 
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler: {e}")
@@ -889,6 +908,48 @@ class MainWindow(QMainWindow):
         has_current = current is not None
         self.btn_move_track_up.setEnabled(has_current)
         self.btn_move_track_down.setEnabled(has_current)
+        self.btn_play_track.setEnabled(has_current)
+
+    def _play_selected_track(self):
+        """Spielt den aktuell ausgewaehlten Track ab, oder pausiert/setzt fort,
+        falls er bereits im Player geladen ist"""
+        current_item = self.track_list.currentItem()
+        if not current_item:
+            return
+
+        track = current_item.data(Qt.ItemDataRole.UserRole)
+        if not track:
+            return
+
+        self.player_bar.toggle_track(track.filepath, track.display_name)
+
+    def _play_previous_track(self):
+        self._play_relative_track(-1)
+
+    def _play_next_track(self):
+        self._play_relative_track(1)
+
+    def _play_relative_track(self, delta: int):
+        """Spielt den vorherigen/naechsten Track relativ zum aktuell im Player
+        geladenen Track (kein Wrap-around am Anfang/Ende der Liste)"""
+        if not self.current_folder or not self.current_folder.tracks:
+            return
+
+        tracks = self.current_folder.tracks
+        current_path = self.player_bar.current_path
+        current_index = next(
+            (i for i, t in enumerate(tracks) if t.filepath == current_path), None
+        )
+        if current_index is None:
+            return
+
+        target_index = current_index + delta
+        if target_index < 0 or target_index >= len(tracks):
+            return
+
+        track = tracks[target_index]
+        self.player_bar.load_track(track.filepath, track.display_name, autoplay=True)
+        self.track_list.setCurrentRow(target_index)
 
     def _on_track_check_changed(self, item: QListWidgetItem):
         """Aktiviert/deaktiviert den 'Auswahl loeschen'-Button je nachdem, ob
@@ -1050,7 +1111,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Kein Ordner",
-                "Bitte waehle zuerst einen Ordner aus."
+                "Bitte wähle zuerst einen Ordner aus."
             )
             return
 
@@ -1066,7 +1127,7 @@ class MainWindow(QMainWindow):
         mode_label, ok = QInputDialog.getItem(
             self,
             "Wiedergabemodus",
-            f"Modus fuer Ordner '{self._resolve_folder_name(self.current_folder)}':",
+            f"Modus für Ordner '{self._resolve_folder_name(self.current_folder)}':",
             mode_labels,
             1,  # Standard: Album
             False
@@ -1081,7 +1142,7 @@ class MainWindow(QMainWindow):
             track_count = max(self.current_folder.track_count, 1)
             special, ok = QInputDialog.getInt(
                 self,
-                "Track auswaehlen",
+                "Track auswählen",
                 "Welcher Track soll gespielt werden?",
                 1, 1, track_count
             )
@@ -1091,7 +1152,7 @@ class MainWindow(QMainWindow):
         confirmed = confirm_action(
             self,
             "Karte programmieren",
-            f"Soll die Karte fuer Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
+            f"Soll die Karte für Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
             f"programmiert werden?",
             default_no=False
         )
@@ -1137,8 +1198,8 @@ class MainWindow(QMainWindow):
             self,
             "Admin-Karte programmieren",
             "Soll diese Karte als Admin-Karte programmiert werden?\n\n"
-            "Eine Admin-Karte ist keinem Ordner zugeordnet und oeffnet am "
-            "TonUINO das Admin-Menue.",
+            "Eine Admin-Karte ist keinem Ordner zugeordnet und öffnet am "
+            "TonUINO das Admin-Menü.",
             default_no=False
         )
 
@@ -1167,6 +1228,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Wird beim Schliessen aufgerufen"""
+        self.player_bar.stop()
         if self.rfid_reader:
             self.rfid_reader.disconnect()
         event.accept()

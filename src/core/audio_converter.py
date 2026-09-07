@@ -137,7 +137,7 @@ class AudioConverter:
         Konvertiert eine Audio-Datei nach MP3
         """
         if not self._available:
-            raise RuntimeError("FFmpeg ist nicht verfuegbar")
+            raise RuntimeError("FFmpeg ist nicht verfügbar")
         
         input_path = Path(input_path)
         output_path = Path(output_path)
@@ -195,7 +195,7 @@ class AudioConverter:
         Konvertiert eine Datei nach MP3 mit Metadaten
         """
         if not self._available:
-            raise RuntimeError("FFmpeg ist nicht verfuegbar")
+            raise RuntimeError("FFmpeg ist nicht verfügbar")
         
         input_path = Path(input_path)
         output_path = Path(output_path)

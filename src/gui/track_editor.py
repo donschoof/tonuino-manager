@@ -58,8 +58,8 @@ class TrackEditorDialog(QDialog):
         form_layout.addRow("Titel:", self.title_edit)
         
         self.artist_edit = QLineEdit()
-        self.artist_edit.setPlaceholderText("Kuenstler")
-        form_layout.addRow("Kuenstler:", self.artist_edit)
+        self.artist_edit.setPlaceholderText("Künstler")
+        form_layout.addRow("Künstler:", self.artist_edit)
         
         self.album_edit = QLineEdit()
         self.album_edit.setPlaceholderText("Album")
@@ -111,7 +111,7 @@ class TrackEditorDialog(QDialog):
         """Laedt ein Cover-Bild"""
         filepath, _ = QFileDialog.getOpenFileName(
             self,
-            "Cover-Bild auswaehlen",
+            "Cover-Bild auswählen",
             "",
             "Bilder (*.jpg *.png *.jpeg);;Alle Dateien (*)"
         )
