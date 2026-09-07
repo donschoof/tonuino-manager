@@ -46,12 +46,15 @@ jobs:
           # swig: wird von pyscard benoetigt, falls aus dem Quellcode gebaut wird
           # libxcb-cursor0 & Co: Qt6 "xcb"-Plattform-Plugin (haeufigste Ursache
           #   fuer "could not load the Qt platform plugin" auf frischen Linux-Systemen)
+          # libpulse0: Laufzeit-Abhaengigkeit von QtMultimedia (Audio-Player) -
+          #   ohne sie schlaegt schon der Import von PyQt6.QtMultimedia fehl
           # xvfb: virtueller Display-Server fuer den headless GUI-Smoketest
           sudo apt-get install -y \
             pcscd libpcsclite-dev libpcsclite1 swig \
             libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
             libxcb-xinerama0 libegl1 \
+            libpulse0 \
             xvfb
 
       - name: Python-Abhaengigkeiten installieren
