@@ -106,22 +106,36 @@ class RFIDReader:
         try:
             from smartcard.System import readers
             from smartcard.scard import SCARD_SHARE_DIRECT, SCARD_SHARE_SHARED
-            
+            from smartcard.CardConnection import CardConnection
+
             reader_list = readers()
             if reader_index >= len(reader_list):
                 return False
-            
+
             self._reader = reader_list[reader_index]
             self._card = self._reader.createConnection()
-            
-            # Versuche zuerst mit SCARD_SHARE_SHARED (benötigt Karte für Kommunikation)
+
+            # Versuche zuerst mit SCARD_SHARE_SHARED (benötigt Karte für Kommunikation).
+            # Protokoll explizit angeben (T0|T1 zur Auto-Verhandlung) statt pyscard per
+            # getProtocol() raten zu lassen - sobald diese CardConnection schon einmal im
+            # SCARD_SHARE_DIRECT-Modus verbunden war, liefert getProtocol() naemlich 0
+            # zurueck, was SCardConnect mit SCARD_SHARE_SHARED ablehnt und pyscard beim
+            # Aufbauen der Fehlermeldung mit einem irrefuehrenden "KeyError: 0" abstuerzen
+            # laesst (dictProtocol[0] existiert nicht) statt den echten Fehler zu zeigen.
+            protocol = CardConnection.T0_protocol | CardConnection.T1_protocol
             try:
-                self._card.connect(mode=SCARD_SHARE_SHARED)
+                self._card.connect(mode=SCARD_SHARE_SHARED, protocol=protocol)
                 self._reader_available = True
                 return True
             except Exception as e:
                 error_str = str(e).lower()
-                if "removed" in error_str or "no card" in error_str or "0x80100069" in error_str:
+                if (
+                    "removed" in error_str
+                    or "no card" in error_str
+                    or "no smart card" in error_str
+                    or "0x80100069" in error_str
+                    or "0x8010000c" in error_str
+                ):
                     # Keine Karte aufgelegt - versuche Reader mit SCARD_SHARE_DIRECT zu aktivieren
                     try:
                         self._card.connect(mode=SCARD_SHARE_DIRECT)
@@ -185,6 +199,7 @@ class RFIDReader:
         # im DIRECT-Modus ohne Karte) - Verbindung neu aufbauen und erneut pruefen
         try:
             from smartcard.scard import SCARD_SHARE_SHARED, SCARD_SHARE_DIRECT
+            from smartcard.CardConnection import CardConnection
         except ImportError:
             return False
 
@@ -194,7 +209,11 @@ class RFIDReader:
             pass
 
         try:
-            self._card.connect(mode=SCARD_SHARE_SHARED)
+            # Protokoll explizit angeben (siehe Kommentar in connect()) - sonst schlaegt
+            # der Wechsel von SCARD_SHARE_DIRECT zurueck zu SCARD_SHARE_SHARED auf
+            # derselben CardConnection fehl, sobald zuvor kein Protokoll ausgehandelt war.
+            protocol = CardConnection.T0_protocol | CardConnection.T1_protocol
+            self._card.connect(mode=SCARD_SHARE_SHARED, protocol=protocol)
             self._direct_mode = False
             response, sw1, sw2 = self._transmit(self.CMD_GET_UID)
             return sw1 == 0x90 and sw2 == 0x00

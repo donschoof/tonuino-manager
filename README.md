@@ -39,6 +39,8 @@ Beide Dateien werden mit `python build_exe.py` erzeugt (siehe unten) und landen 
 pip install -r requirements.txt
 ```
 
+Unter Linux siehe den Abschnitt [Linux](#linux) weiter unten – dort werden zusätzlich Systempakete benötigt und `pip install` muss in der Regel in einem virtuellen Environment erfolgen (siehe „externally-managed-environment“-Hinweis).
+
 3. Starten:
 
 ```bash
@@ -67,13 +69,22 @@ Die Versionsnummer wird dabei automatisch aus `src/core/__init__.py` (`__version
 
 ### Linux
 
-Zusätzlich zu Python 3.10+ und den pip-Abhängigkeiten wird der PC/SC-Stack für den RFID-Reader sowie das Qt-„xcb“-Plattform-Plugin benötigt (Debian/Ubuntu-Namen, für andere Distributionen entsprechend anpassen):
+Zusätzlich zu Python 3.10+ und den pip-Abhängigkeiten wird der PC/SC-Stack für den RFID-Reader sowie das Qt-„xcb“-Plattform-Plugin benötigt (Debian/Ubuntu-Namen, für andere Distributionen entsprechend anpassen). `pyscard` wird beim `pip install` aus dem Quellcode gebaut, daher werden zusätzlich die PC/SC-Entwicklungsheader (`libpcsclite-dev`) sowie `swig` benötigt:
 
 ```bash
-sudo apt install pcscd libpcsclite1 libxcb-cursor0
-pip install -r requirements.txt
-python build_exe.py
+sudo apt install pcscd libpcsclite1 libpcsclite-dev libxcb-cursor0 swig
 ```
+
+Auf aktuellen Debian/Ubuntu-Versionen verweigert `pip` die Installation direkt ins System (`error: externally-managed-environment`, siehe [PEP 668](https://peps.python.org/pep-0668/)). Empfohlen ist daher ein virtuelles Environment:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python main.py        # oder: python build_exe.py
+```
+
+Alternativ kann die Prüfung mit `pip install --break-system-packages -r requirements.txt` umgangen werden (nicht empfohlen, da dabei System-Python-Pakete überschrieben werden können).
 
 `build_exe.py` erkennt Linux automatisch und erzeugt statt des Windows-Installers:
 
