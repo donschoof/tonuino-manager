@@ -27,7 +27,9 @@ jobs:
           - os: ubuntu-latest
             name: linux
           - os: macos-latest
-            name: macos
+            name: macos-arm64
+          - os: macos-13
+            name: macos-intel
 
     runs-on: ${{ matrix.os }}
 
@@ -95,7 +97,7 @@ jobs:
           "
 
       - name: Headless-Smoketest (macOS)
-        if: matrix.name == 'macos'
+        if: matrix.name == 'macos-arm64' || matrix.name == 'macos-intel'
         run: |
           python -c "
           import sys
