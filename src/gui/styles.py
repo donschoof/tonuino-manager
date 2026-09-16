@@ -28,6 +28,39 @@ QWidget {
     font-size: 10pt;
 }
 
+/* === Sandwich-Menue (siehe MainWindow._create_menu_button) === */
+QMenu {
+    background-color: #1e1e2e;
+    border: 1px solid #313244;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+}
+
+QMenu::item:selected {
+    background-color: #313244;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #313244;
+    margin: 4px 8px;
+}
+
+/* Sandwich-Menue-Button oben rechts im Content-Bereich - transparent
+   statt als abgesetzte Schaltflaeche. */
+QToolButton#menuButton {
+    background: transparent;
+    border: none;
+    padding: 4px;
+}
+
+QToolButton#menuButton:hover {
+    background-color: #313244;
+    border-radius: 4px;
+}
+
 /* === Sidebar === */
 QFrame#sidebar {
     background-color: #181825;

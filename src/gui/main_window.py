@@ -5,7 +5,6 @@ Hauptfenster des Tonuino-Managers
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -13,9 +12,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QProgressBar, QSplitter, QInputDialog,
-    QAbstractItemView, QProgressDialog, QApplication
+    QAbstractItemView, QProgressDialog, QApplication,
+    QToolButton, QMenu
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoint
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
 from core import __version__
@@ -266,7 +266,46 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         
         main_layout.addWidget(splitter)
-    
+
+    def _create_menu_button(self) -> QToolButton:
+        """Erstellt den Sandwich-Menue-Button mit den Update-Einstellungen.
+        Bewusst kein QMainWindow-Menuebalken (menuBar()) - der wuerde als
+        eigene, vom dunklen Theme abgesetzte Zeile am oberen Fensterrand
+        erscheinen. Der Button wird stattdessen direkt oben rechts in den
+        Content-Bereich eingebettet (siehe _create_main_content)."""
+        menu = QMenu(self)
+
+        action_check_now = menu.addAction("Nach Updates suchen")
+        action_check_now.triggered.connect(self._check_for_updates_manual)
+
+        menu.addSeparator()
+
+        auto_check_enabled = QSettings().value("updater/auto_check_enabled", True, type=bool)
+        action_auto_check = menu.addAction("Automatisch nach Updates suchen")
+        action_auto_check.setCheckable(True)
+        action_auto_check.setChecked(auto_check_enabled)
+        action_auto_check.toggled.connect(self._on_auto_check_toggled)
+
+        menu_button = QToolButton(self)
+        menu_button.setObjectName("menuButton")
+        menu_button.setIcon(self._icon_from_glyph("", color="#cdd6f4", size=28))  # menu
+        menu_button.setIconSize(QSize(28, 28))
+        menu_button.setToolTip("Menü")
+        menu_button.setAutoRaise(True)
+        # Bewusst kein setMenu()/setPopupMode(): Qt's automatische Popup-
+        # Platzierung richtet das Menu links am Button aus und laesst es nach
+        # rechts aufklappen - direkt am rechten Fensterrand wuerde es damit
+        # ueber das Fenster hinausragen. Stattdessen manuell so positionieren,
+        # dass die rechte Menu-Kante an der rechten Button-Kante ausgerichtet
+        # ist (Aufklappen nach links, bleibt im Fenster).
+        menu_button.clicked.connect(lambda: self._show_corner_menu(menu_button, menu))
+
+        return menu_button
+
+    def _show_corner_menu(self, button: QToolButton, menu: QMenu):
+        pos = button.mapToGlobal(QPoint(button.width() - menu.sizeHint().width(), button.height()))
+        menu.exec(pos)
+
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""
         sidebar = QFrame()
@@ -427,7 +466,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
-        
+
+        top_bar = QHBoxLayout()
+        top_bar.addStretch()
+        top_bar.addWidget(self._create_menu_button())
+        layout.addLayout(top_bar)
+
         self.welcome_widget = QWidget()
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1365,32 +1409,52 @@ class MainWindow(QMainWindow):
                     f"Fehler beim Löschen: {e}"
                 )
 
-    UPDATE_CHECK_INTERVAL = timedelta(hours=24)
-
     def _check_for_updates(self):
-        """Prueft im Hintergrund, ob eine neuere Version verfuegbar ist -
-        hoechstens einmal pro UPDATE_CHECK_INTERVAL, um die GitHub-API nicht
-        unnoetig oft anzufragen."""
-        settings = QSettings()
-        last_check = settings.value("updater/last_check_timestamp", "", type=str)
-        if last_check:
-            try:
-                if datetime.now() - datetime.fromisoformat(last_check) < self.UPDATE_CHECK_INTERVAL:
-                    return
-            except ValueError:
-                pass
+        """Automatische Update-Pruefung beim Programmstart - nur, wenn im
+        Hilfe-Menue nicht deaktiviert. Ohne Drosselung, da ein GitHub-API-
+        Request beim Start keinen nennenswerten Traffic verursacht. Schlaegt
+        die Pruefung fehl, bleibt das hier bewusst unbemerkt (siehe
+        UpdateChecker) - anders als bei der manuellen Pruefung ueber das
+        Menue soll ein Start nie mit einer Fehlermeldung unterbrochen werden."""
+        if not QSettings().value("updater/auto_check_enabled", True, type=bool):
+            return
+        self._run_update_check(manual=False)
 
+    def _check_for_updates_manual(self):
+        """Manuelle Update-Pruefung ueber Hilfe > Nach Updates suchen - meldet
+        im Gegensatz zum automatischen Start-Check explizit, ob ein Update
+        gefunden wurde, keins vorhanden ist, oder die Pruefung fehlgeschlagen ist."""
+        if getattr(self, "_update_checker", None) is not None and self._update_checker.isRunning():
+            return
+        self._run_update_check(manual=True)
+
+    def _run_update_check(self, manual: bool):
         self._update_checker = UpdateChecker(__version__)
         self._update_checker.update_available.connect(self._on_update_available)
-        self._update_checker.no_update.connect(self._on_update_check_done)
+        if manual:
+            self._update_checker.no_update.connect(self._on_manual_check_no_update)
+            self._update_checker.check_failed.connect(self._on_manual_check_failed)
         self._update_checker.start()
 
-    def _on_update_check_done(self):
-        QSettings().setValue("updater/last_check_timestamp", datetime.now().isoformat())
+    def _on_manual_check_no_update(self):
+        QMessageBox.information(
+            self,
+            "Kein Update verfügbar",
+            f"Sie verwenden bereits die neueste Version ({__version__})."
+        )
+
+    def _on_manual_check_failed(self, message: str):
+        QMessageBox.warning(
+            self,
+            "Update-Prüfung fehlgeschlagen",
+            f"Die Prüfung auf Updates ist fehlgeschlagen:\n{message}"
+        )
+
+    def _on_auto_check_toggled(self, checked: bool):
+        QSettings().setValue("updater/auto_check_enabled", checked)
 
     def _on_update_available(self, info: UpdateInfo):
         settings = QSettings()
-        settings.setValue("updater/last_check_timestamp", datetime.now().isoformat())
 
         if settings.value("updater/ignored_version", "", type=str) == info.version:
             return
