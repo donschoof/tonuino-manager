@@ -231,6 +231,21 @@ def create_macos_package():
         print(f"\nFEHLER: {app_path} nicht gefunden - App-Bundle wurde nicht erstellt.")
         sys.exit(1)
 
+    # qt.conf nach Contents/Resources kopieren - OHNE das crasht die gefrorene
+    # App beim Start zuverlaessig (EXC_BAD_ACCESS in einem Qt6-internen
+    # Static-Initializer, der beim Laden von QtCore.abi3.so ueber
+    # CFBundleCopyBundleURL versucht die Bundle-Pfade aufzuloesen - auf einem
+    # echten Intel-Mac empirisch reproduziert und durch dieses qt.conf
+    # behoben: Qt findet dann seine Pfade darueber, statt ueber die
+    # fehlerhafte CFBundle-Erkennung). Muss VOR dem Signieren passieren, sonst
+    # ist die Codesignatur (die alle Bundle-Dateien versiegelt) hinterher
+    # ungueltig. Contents/MacOS/qt.conf allein reicht nicht - Qt sucht bei
+    # App-Bundles zusaetzlich/stattdessen in Contents/Resources.
+    resources_dir = app_path / "Contents" / "Resources"
+    qt_conf_src = Path("src/resources/qt.conf")
+    if qt_conf_src.exists():
+        shutil.copy2(qt_conf_src, resources_dir / "qt.conf")
+
     print("Signiere App-Bundle (ad-hoc, kein Apple Developer Account noetig)...")
     result = subprocess.run(
         ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],
