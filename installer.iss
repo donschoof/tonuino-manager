@@ -4,7 +4,7 @@
 ; Installation erfolgt pro Maschine unter Program Files (benoetigt Administrator/UAC).
 
 #define MyAppName "Tonuino-Manager"
-; MyAppVersion wird von build_exe.py per /DMyAppVersion=... aus
+; MyAppVersion wird von build_package.py per /DMyAppVersion=... aus
 ; src/core/__init__.py (__version__) uebergeben, damit es nur eine Quelle fuer
 ; die Versionsnummer im Projekt gibt. Der Wert hier ist nur ein Fallback fuer
 ; einen direkten "iscc installer.iss"-Aufruf ohne das Build-Skript.

@@ -104,13 +104,13 @@ python main.py
 
 ## Eigene Builds erzeugen
 
-Voraussetzung ist das [Entwicklungs-Setup](#am-repo-arbeiten-entwicklung) der jeweiligen Plattform (aktiviertes venv mit installierten Abhängigkeiten). `build_exe.py` erkennt das Betriebssystem automatisch und erzeugt die passende Programmdatei bzw. das passende Installationspaket im `dist`-Ordner. PyInstaller kompiliert nicht plattformübergreifend – der Build muss also auf jeder Zielplattform separat ausgeführt werden.
+Voraussetzung ist das [Entwicklungs-Setup](#am-repo-arbeiten-entwicklung) der jeweiligen Plattform (aktiviertes venv mit installierten Abhängigkeiten). `build_package.py` erkennt das Betriebssystem automatisch und erzeugt die passende Programmdatei bzw. das passende Installationspaket im `dist`-Ordner. PyInstaller kompiliert nicht plattformübergreifend – der Build muss also auf jeder Zielplattform separat ausgeführt werden.
 
 ```bash
-python build_exe.py
+python build_package.py
 ```
 
-- **Windows**: `dist/Tonuino-Manager.exe` (portabel) sowie – falls [Inno Setup](https://jrsoftware.org/isdl.php) installiert ist – `dist/Tonuino-Manager-<Version>-Setup.exe`. Alternativ per Doppelklick auf `Build_EXE.bat`.
+- **Windows**: `dist/Tonuino-Manager.exe` (portabel) sowie – falls [Inno Setup](https://jrsoftware.org/isdl.php) installiert ist – `dist/Tonuino-Manager-<Version>-Setup.exe`. Alternativ per Doppelklick auf `Build_Package.bat`.
 - **Linux**: `dist/Tonuino-Manager` (portabel) sowie `dist/tonuino-manager_<Version>_amd64.deb` (Debian/Ubuntu-basiert, benötigt `dpkg-deb`, i. d. R. bereits vorhanden). Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich nur die portable Datei nutzen.
 - **macOS**: `dist/Tonuino-Manager.app` sowie `dist/Tonuino-Manager-<Version>.dmg` (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos) zur Gatekeeper-Warnung bei selbst gebauten, weitergegebenen Kopien).
 

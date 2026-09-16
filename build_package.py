@@ -1,6 +1,7 @@
 """
 Build-Skript fuer Tonuino-Manager
-Erstellt eine standalone .exe Datei mit PyInstaller
+Erstellt mit PyInstaller eine standalone Programmdatei und packt sie
+plattformspezifisch (Windows-Installer, .deb-Paket, .dmg-Abbild).
 """
 
 import subprocess
@@ -42,7 +43,7 @@ def binary_name() -> str:
     return "Tonuino-Manager.exe" if sys.platform == "win32" else "Tonuino-Manager"
 
 
-def create_exe():
+def create_binary():
     """Erstellt die Programmdatei mit PyInstaller (muss auf jeder Zielplattform
     separat ausgefuehrt werden - PyInstaller kompiliert nicht plattformuebergreifend)"""
 
@@ -130,7 +131,7 @@ def create_linux_package():
     auf windows-latest vorinstalliert ist - kein zusaetzliches Tool noetig.
     Einschraenkung: laeuft nativ nur auf Debian/Ubuntu-basierten Distros."""
     dist_dir = Path("dist")
-    exe_name = binary_name()
+    binary_file_name = binary_name()
     version = get_version()
     package_name = "tonuino-manager"
     arch = "amd64"
@@ -146,7 +147,7 @@ def create_linux_package():
     for directory in (bin_dir, icon_dir, desktop_dir, debian_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(dist_dir / exe_name, bin_dir / package_name)
+    shutil.copy2(dist_dir / binary_file_name, bin_dir / package_name)
     os.chmod(bin_dir / package_name, 0o755)
 
     icon_src = Path("src/resources/icon.png")
@@ -302,7 +303,7 @@ if __name__ == "__main__":
     clean_build()
 
     # Programmdatei erstellen
-    create_exe()
+    create_binary()
 
     # Plattformspezifische Paketierung
     if sys.platform == "win32":
