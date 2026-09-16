@@ -5,7 +5,6 @@ Hauptfenster des Tonuino-Managers
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -1365,32 +1364,16 @@ class MainWindow(QMainWindow):
                     f"Fehler beim Löschen: {e}"
                 )
 
-    UPDATE_CHECK_INTERVAL = timedelta(hours=24)
-
     def _check_for_updates(self):
-        """Prueft im Hintergrund, ob eine neuere Version verfuegbar ist -
-        hoechstens einmal pro UPDATE_CHECK_INTERVAL, um die GitHub-API nicht
-        unnoetig oft anzufragen."""
-        settings = QSettings()
-        last_check = settings.value("updater/last_check_timestamp", "", type=str)
-        if last_check:
-            try:
-                if datetime.now() - datetime.fromisoformat(last_check) < self.UPDATE_CHECK_INTERVAL:
-                    return
-            except ValueError:
-                pass
-
+        """Prueft im Hintergrund, ob eine neuere Version verfuegbar ist - bei
+        jedem Programmstart, ohne Drosselung (ein GitHub-API-Request beim
+        Start verursacht keinen nennenswerten Traffic)."""
         self._update_checker = UpdateChecker(__version__)
         self._update_checker.update_available.connect(self._on_update_available)
-        self._update_checker.no_update.connect(self._on_update_check_done)
         self._update_checker.start()
-
-    def _on_update_check_done(self):
-        QSettings().setValue("updater/last_check_timestamp", datetime.now().isoformat())
 
     def _on_update_available(self, info: UpdateInfo):
         settings = QSettings()
-        settings.setValue("updater/last_check_timestamp", datetime.now().isoformat())
 
         if settings.value("updater/ignored_version", "", type=str) == info.version:
             return
