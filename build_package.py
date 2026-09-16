@@ -7,6 +7,7 @@ plattformspezifisch (Windows-Installer, .deb-Paket, .dmg-Abbild).
 import subprocess
 import sys
 import os
+import platform
 import re
 import shutil
 from pathlib import Path
@@ -205,6 +206,15 @@ Description: Tonuino SD-Karten und RFID-Karten verwalten
     print(f"Deinstallation: sudo apt remove {package_name}")
 
 
+def macos_arch_label() -> str:
+    """Lesbares Architektur-Suffix fuer den DMG-Dateinamen. platform.machine()
+    liefert auf Apple Silicon 'arm64', auf Intel-Macs 'x86_64' - beide CI-Legs
+    (macos-latest/arm64 und macos-15-intel) erzeugen sonst identisch benannte
+    dmg-Dateien, was beim gemeinsamen Veroeffentlichen in einem GitHub-Release
+    zum Namenskonflikt fuehrt."""
+    return "arm64" if platform.machine() == "arm64" else "intel"
+
+
 def create_macos_package():
     """Erstellt ein .dmg-Abbild mit der App-Bundle und einem Alias auf
     /Applications (Standard-Verteilungsformat auf macOS: Nutzer oeffnen das
@@ -264,7 +274,7 @@ def create_macos_package():
     shutil.copytree(app_path, dmg_root / app_name)
     os.symlink("/Applications", dmg_root / "Applications")
 
-    archive_name = f"Tonuino-Manager-{version}.dmg"
+    archive_name = f"Tonuino-Manager-{version}-{macos_arch_label()}.dmg"
     archive_path = dist_dir / archive_name
     if archive_path.exists():
         archive_path.unlink()

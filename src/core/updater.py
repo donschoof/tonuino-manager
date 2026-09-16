@@ -4,6 +4,7 @@ Update-Pruefung und -Download fuer Tonuino-Manager (GitHub Releases)
 
 import json
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -49,13 +50,20 @@ def is_newer_version(remote: str, local: str) -> bool:
 def _asset_pattern_for_platform() -> Optional[re.Pattern]:
     """Regex fuer den Installer-Asset-Namen der aktuellen Plattform - bewusst
     ein exakter Namens-Match (nicht nur Endung), damit z.B. die Windows-
-    -portable.exe nie faelschlich als -Setup.exe erkannt wird."""
+    -portable.exe nie faelschlich als -Setup.exe erkannt wird.
+
+    macOS-Releases enthalten zwei .dmg-Varianten (Apple Silicon und Intel,
+    siehe build_package.py's macos_arch_label()) - das Pattern muss daher
+    zusaetzlich nach der Architektur des laufenden Rechners filtern, sonst
+    koennte auf einem Intel-Mac faelschlich das arm64-dmg (oder umgekehrt)
+    heruntergeladen werden."""
     if sys.platform.startswith("win"):
         return re.compile(r"^Tonuino-Manager-.*-Setup\.exe$")
     if sys.platform.startswith("linux"):
         return re.compile(r"^tonuino-manager_.*_amd64\.deb$")
     if sys.platform == "darwin":
-        return re.compile(r"^Tonuino-Manager-.*\.dmg$")
+        arch = "arm64" if platform.machine() == "arm64" else "intel"
+        return re.compile(rf"^Tonuino-Manager-.*-{arch}\.dmg$")
     return None
 
 
