@@ -18,7 +18,7 @@ block_cipher = None
 
 # Einzige Quelle fuer die Versionsnummer (siehe src/core/__init__.py) - wird
 # unten fuer den CFBundleVersion/CFBundleShortVersionString der macOS-App
-# gebraucht (PyInstaller kompiliert build_exe.py's get_version() hier nicht
+# gebraucht (PyInstaller kompiliert build_package.py's get_version() hier nicht
 # mit, daher die eigene, minimale Regex-Lektuere).
 def _get_version() -> str:
     init_file = Path('src/core/__init__.py').read_text(encoding='utf-8')
@@ -29,7 +29,7 @@ def _get_version() -> str:
 # macOS-Pendant fuer die App-Bundle. Auf Linux ignoriert PyInstaller den
 # icon-Parameter fuer EXE() ohnehin (ELF-Binaries betten keine Icons ein - die
 # Desktop-Integration erfolgt stattdessen ueber eine .desktop-Datei +
-# icon.png, siehe build_exe.py).
+# icon.png, siehe build_package.py).
 if sys.platform == 'win32':
     _icon = 'src/resources/icon.ico'
 elif sys.platform == 'darwin':

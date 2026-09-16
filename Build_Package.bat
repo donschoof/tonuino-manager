@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ==========================================
-echo   Tonuino-Manager - EXE erstellen
+echo   Tonuino-Manager - Programmdatei und Installer erstellen
 echo ==========================================
 echo.
 
@@ -24,10 +24,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo Erstelle EXE-Datei...
-python build_exe.py
+echo Erstelle Programmdatei und Installer...
+python build_package.py
 if errorlevel 1 (
-    echo FEHLER beim Erstellen der EXE!
+    echo FEHLER beim Erstellen!
     pause
     exit /b 1
 )
@@ -37,6 +37,6 @@ echo ==========================================
 echo   ERFOLG!
 echo ==========================================
 echo.
-echo Die EXE-Datei befindet sich jetzt im "dist"-Ordner.
+echo Programmdatei und Installer befinden sich jetzt im "dist"-Ordner.
 echo.
 pause
