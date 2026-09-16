@@ -12,9 +12,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QProgressBar, QSplitter, QInputDialog,
-    QAbstractItemView, QProgressDialog, QApplication
+    QAbstractItemView, QProgressDialog, QApplication,
+    QToolButton, QMenu
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoint
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
 from core import __version__
@@ -203,7 +204,6 @@ class MainWindow(QMainWindow):
         self._rfid_card_programmed = False  # fuer die Freischaltung des Loeschen-Icons
 
         self._setup_ui()
-        self._setup_menu_bar()
         self._setup_statusbar()
         self._check_dependencies()
         
@@ -267,20 +267,44 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(splitter)
 
-    def _setup_menu_bar(self):
-        """Erstellt die Menueleiste mit den Update-Einstellungen."""
-        help_menu = self.menuBar().addMenu("&Hilfe")
+    def _create_menu_button(self) -> QToolButton:
+        """Erstellt den Sandwich-Menue-Button mit den Update-Einstellungen.
+        Bewusst kein QMainWindow-Menuebalken (menuBar()) - der wuerde als
+        eigene, vom dunklen Theme abgesetzte Zeile am oberen Fensterrand
+        erscheinen. Der Button wird stattdessen direkt oben rechts in den
+        Content-Bereich eingebettet (siehe _create_main_content)."""
+        menu = QMenu(self)
 
-        action_check_now = help_menu.addAction("Nach Updates suchen")
+        action_check_now = menu.addAction("Nach Updates suchen")
         action_check_now.triggered.connect(self._check_for_updates_manual)
 
-        help_menu.addSeparator()
+        menu.addSeparator()
 
         auto_check_enabled = QSettings().value("updater/auto_check_enabled", True, type=bool)
-        action_auto_check = help_menu.addAction("Automatisch nach Updates suchen")
+        action_auto_check = menu.addAction("Automatisch nach Updates suchen")
         action_auto_check.setCheckable(True)
         action_auto_check.setChecked(auto_check_enabled)
         action_auto_check.toggled.connect(self._on_auto_check_toggled)
+
+        menu_button = QToolButton(self)
+        menu_button.setObjectName("menuButton")
+        menu_button.setIcon(self._icon_from_glyph("", color="#cdd6f4", size=28))  # menu
+        menu_button.setIconSize(QSize(28, 28))
+        menu_button.setToolTip("Menü")
+        menu_button.setAutoRaise(True)
+        # Bewusst kein setMenu()/setPopupMode(): Qt's automatische Popup-
+        # Platzierung richtet das Menu links am Button aus und laesst es nach
+        # rechts aufklappen - direkt am rechten Fensterrand wuerde es damit
+        # ueber das Fenster hinausragen. Stattdessen manuell so positionieren,
+        # dass die rechte Menu-Kante an der rechten Button-Kante ausgerichtet
+        # ist (Aufklappen nach links, bleibt im Fenster).
+        menu_button.clicked.connect(lambda: self._show_corner_menu(menu_button, menu))
+
+        return menu_button
+
+    def _show_corner_menu(self, button: QToolButton, menu: QMenu):
+        pos = button.mapToGlobal(QPoint(button.width() - menu.sizeHint().width(), button.height()))
+        menu.exec(pos)
 
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""
@@ -442,7 +466,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
-        
+
+        top_bar = QHBoxLayout()
+        top_bar.addStretch()
+        top_bar.addWidget(self._create_menu_button())
+        layout.addLayout(top_bar)
+
         self.welcome_widget = QWidget()
         welcome_layout = QVBoxLayout(self.welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
