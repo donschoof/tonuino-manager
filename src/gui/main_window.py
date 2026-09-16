@@ -42,6 +42,20 @@ def resource_path(*parts) -> str:
     return os.path.join(src_dir, *parts)
 
 
+def heading_font(point_size: int) -> QFont:
+    """Fette Ueberschriften-Schriftart. 'Segoe UI' wird nur unter Windows
+    explizit gesetzt (dort das native Default) - unter macOS/Linux existiert
+    diese Schriftart nicht, ein fest codierter Name fuehrt dort zu einer
+    Qt-Log-Warnung ("Populating font family aliases... Replace uses of
+    missing font family") und einem uneinheitlichen Fallback-Rendering.
+    Ohne explizite Familie verwendet Qt dort automatisch die native
+    System-Schriftart (San Francisco bzw. die Desktop-Standardschrift)."""
+    font = QFont("Segoe UI") if sys.platform == "win32" else QFont()
+    font.setPointSize(point_size)
+    font.setWeight(QFont.Weight.Bold)
+    return font
+
+
 def confirm_action(parent, title: str, text: str, default_no: bool = True) -> bool:
     """Zeigt einen Ja/Nein-Bestaetigungsdialog mit deutschen Buttons.
     Qt uebersetzt die Standard-Yes/No-Buttons von QMessageBox.question() nicht
@@ -277,7 +291,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel("Tonuino-Manager")
         title.setObjectName("sidebarTitle")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        title.setFont(heading_font(14))
         title_row.addWidget(title, 1)
 
         layout.addLayout(title_row)
@@ -308,7 +322,7 @@ class MainWindow(QMainWindow):
         title_row.setSpacing(8)
 
         rfid_title = QLabel("RFID-Karte")
-        rfid_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        rfid_title.setFont(heading_font(10))
         title_row.addWidget(rfid_title)
 
         title_row.addStretch()
@@ -419,7 +433,7 @@ class MainWindow(QMainWindow):
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         welcome_label = QLabel("Willkommen beim Tonuino-Manager!")
-        welcome_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        welcome_label.setFont(heading_font(18))
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_label)
         
