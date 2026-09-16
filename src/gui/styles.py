@@ -3,6 +3,19 @@ Stylesheet fuer den Tonuino-Manager
 Modernes Dark Theme mit Akzentfarben
 """
 
+import sys
+
+# 'Segoe UI' ist eine Windows-exklusive Schriftart und dort das native
+# Default - unter macOS/Linux existiert sie nicht. Als fest codierter
+# QSS-Font-Family-Name fuehrt sie dort zu einer Qt-Log-Warnung ("Populating
+# font family aliases... Replace uses of missing font family") beim Start.
+# Auf anderen Plattformen wird die Angabe daher weggelassen, damit Qt die
+# native System-Schriftart der jeweiligen Plattform verwendet.
+_FONT_FAMILY = "'Segoe UI', " if sys.platform == "win32" else ""
+
+# __FONT_FAMILY__ wird unten per str.replace() ersetzt - das Stylesheet bleibt
+# dadurch ein normaler (kein f-) String, sodass die zahlreichen QSS-{}-Bloecke
+# nicht escaped werden muessen.
 MAIN_STYLESHEET = """
 /* === Globale Styles === */
 QMainWindow {
@@ -11,7 +24,7 @@ QMainWindow {
 
 QWidget {
     color: #cdd6f4;
-    font-family: 'Segoe UI', 'Arial', sans-serif;
+    font-family: __FONT_FAMILY__'Arial', sans-serif;
     font-size: 10pt;
 }
 
@@ -376,5 +389,5 @@ QLabel#statusCaption {
     font-size: 8pt;
     color: #a6adc8;
 }
-"""
+""".replace("__FONT_FAMILY__", _FONT_FAMILY)
 
