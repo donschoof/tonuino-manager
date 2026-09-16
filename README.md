@@ -34,10 +34,10 @@ Portable, nicht-installierte Programmdateien (z. B. für Linux-Distributionen oh
 
 ### Hinweis zur Signatur (macOS)
 
-Die App wird beim Bauen ad-hoc signiert (kostenlos, ohne Apple Developer Account) – das macht sie auf Apple Silicon überhaupt erst ausführbar (dort verweigert der Kernel unsignierten Code komplett), ersetzt aber keine echte Signatur mit Notarization. Beim ersten Start einer heruntergeladenen (Quarantäne-Flag gesetzte) Kopie zeigt Gatekeeper daher „‚Tonuino-Manager‘ ist beschädigt und sollte in den Papierkorb gelegt werden“ – das ist irreführend formuliert, liegt aber nicht an einer beschädigten Datei, sondern schlicht an der fehlenden Notarization (kostenpflichtiges Apple Developer Program, 99 $/Jahr, samt Einreichung bei Apple). Ein Rechtsklick → „Öffnen“ reicht bei dieser Meldung auf aktuellen macOS-Versionen nicht mehr aus; stattdessen im Terminal die Quarantäne entfernen:
+Die App wird beim Bauen ad-hoc signiert (kostenlos, ohne Apple Developer Account) – das macht sie auf Apple Silicon überhaupt erst ausführbar (dort verweigert der Kernel unsignierten Code komplett), ersetzt aber keine echte Signatur mit Notarization. Beim ersten Start einer heruntergeladenen (Quarantäne-Flag gesetzte) Kopie zeigt Gatekeeper daher „‚Tonuino-Manager‘ ist beschädigt und sollte in den Papierkorb gelegt werden“ – das ist irreführend formuliert, liegt aber nicht an einer beschädigten Datei, sondern schlicht an der fehlenden kostenpflichtigen Signatur. Ein Rechtsklick → „Öffnen“ reicht bei dieser Meldung auf aktuellen macOS-Versionen nicht mehr aus; stattdessen im Terminal die Quarantäne entfernen:
 
 ```bash
-xattr -cr /pfad/zu/Tonuino-Manager.app
+xattr -cr /Applications/Tonuino-Manager.app
 ```
 
 Danach lässt sich die App normal per Doppelklick starten.
