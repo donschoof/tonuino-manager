@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         self._rfid_card_programmed = False  # fuer die Freischaltung des Loeschen-Icons
 
         self._setup_ui()
+        self._setup_menu_bar()
         self._setup_statusbar()
         self._check_dependencies()
         
@@ -265,7 +266,22 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         
         main_layout.addWidget(splitter)
-    
+
+    def _setup_menu_bar(self):
+        """Erstellt die Menueleiste mit den Update-Einstellungen."""
+        help_menu = self.menuBar().addMenu("&Hilfe")
+
+        action_check_now = help_menu.addAction("Nach Updates suchen")
+        action_check_now.triggered.connect(self._check_for_updates_manual)
+
+        help_menu.addSeparator()
+
+        auto_check_enabled = QSettings().value("updater/auto_check_enabled", True, type=bool)
+        action_auto_check = help_menu.addAction("Automatisch nach Updates suchen")
+        action_auto_check.setCheckable(True)
+        action_auto_check.setChecked(auto_check_enabled)
+        action_auto_check.toggled.connect(self._on_auto_check_toggled)
+
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""
         sidebar = QFrame()
@@ -1365,12 +1381,48 @@ class MainWindow(QMainWindow):
                 )
 
     def _check_for_updates(self):
-        """Prueft im Hintergrund, ob eine neuere Version verfuegbar ist - bei
-        jedem Programmstart, ohne Drosselung (ein GitHub-API-Request beim
-        Start verursacht keinen nennenswerten Traffic)."""
+        """Automatische Update-Pruefung beim Programmstart - nur, wenn im
+        Hilfe-Menue nicht deaktiviert. Ohne Drosselung, da ein GitHub-API-
+        Request beim Start keinen nennenswerten Traffic verursacht. Schlaegt
+        die Pruefung fehl, bleibt das hier bewusst unbemerkt (siehe
+        UpdateChecker) - anders als bei der manuellen Pruefung ueber das
+        Menue soll ein Start nie mit einer Fehlermeldung unterbrochen werden."""
+        if not QSettings().value("updater/auto_check_enabled", True, type=bool):
+            return
+        self._run_update_check(manual=False)
+
+    def _check_for_updates_manual(self):
+        """Manuelle Update-Pruefung ueber Hilfe > Nach Updates suchen - meldet
+        im Gegensatz zum automatischen Start-Check explizit, ob ein Update
+        gefunden wurde, keins vorhanden ist, oder die Pruefung fehlgeschlagen ist."""
+        if getattr(self, "_update_checker", None) is not None and self._update_checker.isRunning():
+            return
+        self._run_update_check(manual=True)
+
+    def _run_update_check(self, manual: bool):
         self._update_checker = UpdateChecker(__version__)
         self._update_checker.update_available.connect(self._on_update_available)
+        if manual:
+            self._update_checker.no_update.connect(self._on_manual_check_no_update)
+            self._update_checker.check_failed.connect(self._on_manual_check_failed)
         self._update_checker.start()
+
+    def _on_manual_check_no_update(self):
+        QMessageBox.information(
+            self,
+            "Kein Update verfügbar",
+            f"Sie verwenden bereits die neueste Version ({__version__})."
+        )
+
+    def _on_manual_check_failed(self, message: str):
+        QMessageBox.warning(
+            self,
+            "Update-Prüfung fehlgeschlagen",
+            f"Die Prüfung auf Updates ist fehlgeschlagen:\n{message}"
+        )
+
+    def _on_auto_check_toggled(self, checked: bool):
+        QSettings().setValue("updater/auto_check_enabled", checked)
 
     def _on_update_available(self, info: UpdateInfo):
         settings = QSettings()

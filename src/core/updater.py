@@ -81,12 +81,16 @@ def select_asset(assets: list) -> Optional[dict]:
 
 class UpdateChecker(QThread):
     """Prueft im Hintergrund, ob auf GitHub eine neuere Version verfuegbar ist.
-    Schlaegt die Pruefung fehl (offline, Rate-Limit, kaputtes JSON, ...), wird
-    das grundsaetzlich als 'kein Update' behandelt - ein Hintergrund-Check darf
-    beim Start nie eine Fehlermeldung oder einen Crash verursachen."""
+
+    Der automatische Check beim Programmstart hoert nur auf update_available -
+    ein Fehlschlagen (offline, Rate-Limit, kaputtes JSON, ...) bleibt dort
+    bewusst unbemerkt, damit er nie eine Fehlermeldung oder einen Crash beim
+    Start verursacht. Die manuelle Pruefung ueber das Hilfe-Menue hoert
+    zusaetzlich auf no_update/check_failed, um explizit Rueckmeldung zu geben."""
 
     update_available = pyqtSignal(object)  # UpdateInfo
     no_update = pyqtSignal()
+    check_failed = pyqtSignal(str)  # Fehlermeldung
 
     def __init__(self, current_version: str):
         super().__init__()
@@ -123,8 +127,8 @@ class UpdateChecker(QThread):
                 asset_size=asset.get("size", 0),
             )
             self.update_available.emit(info)
-        except Exception:
-            self.no_update.emit()
+        except Exception as e:
+            self.check_failed.emit(str(e))
 
 
 class UpdateDownloader(QThread):
