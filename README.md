@@ -25,10 +25,11 @@ Fertige Builds gibt es auf der [Releases-Seite](https://github.com/donschoof/ton
 | Betriebssystem | Datei | Hinweise |
 | --- | --- | --- |
 | Windows | `Tonuino-Manager-<Version>-Setup.exe` | Installer für `Program Files`, legt Startmenü-/optional Desktop-Verknüpfungen an, über *Einstellungen → Apps & Features* deinstallierbar |
-| macOS | `Tonuino-Manager-<Version>.dmg` | Öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen. Die App ist ad-hoc signiert (kein Apple Developer Account); beim ersten Start ist ein manueller Schritt nötig (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos)) |
+| macOS (Apple Silicon) | `Tonuino-Manager-<Version>-arm64.dmg` | Öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen. Die App ist ad-hoc signiert (kein Apple Developer Account); beim ersten Start ist ein manueller Schritt nötig (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos)) |
+| macOS (Intel) | `Tonuino-Manager-<Version>-intel.dmg` | Wie oben, für Intel-Macs |
 | Linux (Debian/Ubuntu-basiert) | `tonuino-manager_<Version>_amd64.deb` | `sudo apt install ./tonuino-manager_<Version>_amd64.deb`, Deinstallation über `sudo apt remove tonuino-manager` |
 
-FFmpeg ist in allen drei Builds bereits enthalten, es muss nichts separat installiert werden.
+FFmpeg ist in allen Builds bereits enthalten, es muss nichts separat installiert werden.
 
 Portable, nicht-installierte Programmdateien (z. B. für Linux-Distributionen ohne `apt`) lassen sich mit dem [lokalen Build](#eigene-builds-erzeugen) erzeugen.
 
@@ -112,7 +113,7 @@ python build_package.py
 
 - **Windows**: `dist/Tonuino-Manager.exe` (portabel) sowie – falls [Inno Setup](https://jrsoftware.org/isdl.php) installiert ist – `dist/Tonuino-Manager-<Version>-Setup.exe`. Alternativ per Doppelklick auf `Build_Package.bat`.
 - **Linux**: `dist/Tonuino-Manager` (portabel) sowie `dist/tonuino-manager_<Version>_amd64.deb` (Debian/Ubuntu-basiert, benötigt `dpkg-deb`, i. d. R. bereits vorhanden). Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich nur die portable Datei nutzen.
-- **macOS**: `dist/Tonuino-Manager.app` sowie `dist/Tonuino-Manager-<Version>.dmg` (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos) zur Gatekeeper-Warnung bei selbst gebauten, weitergegebenen Kopien).
+- **macOS**: `dist/Tonuino-Manager.app` sowie `dist/Tonuino-Manager-<Version>-arm64.dmg` bzw. `...-intel.dmg` (je nach Prozessor des Build-Rechners, siehe [macOS-Hinweis](#hinweis-zur-signatur-macos) zur Gatekeeper-Warnung bei selbst gebauten, weitergegebenen Kopien).
 
 Die Versionsnummer wird dabei automatisch aus [src/core/\_\_init\_\_.py](src/core/__init__.py) (`__version__`) übernommen.
 
