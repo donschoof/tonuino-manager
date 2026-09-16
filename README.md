@@ -1,12 +1,11 @@
 # Tonuino-Manager
 
-**Version 1.2.3**
+**Version 1.2.4**
 
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
 
-**Plattformen**: Windows (Installer + portable EXE), Linux (.deb-Installer + portable Programmdatei) und macOS (.dmg + App-Bundle) werden unterstützt und per CI gebaut/getestet ([.github/workflows/build.yml](.github/workflows/build.yml)).
-
+**Plattformen**: Windows, Linux und macOS werden unterstützt und bei jedem Push/PR per CI gebaut und getestet ([.github/workflows/build.yml](.github/workflows/build.yml)).
 
 ## Features
 
@@ -17,95 +16,23 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 - **Automatische Ordnernamen & Cover**: Ordnername wird aus dem Album-Tag des ersten Tracks abgeleitet, das Cover aus dem eingebetteten ID3-Cover-Art der Tracks
 - **RFID-Programmierung**: Direkte Programmierung über den ACR122U-Reader – reguläre Ordnerkarten (mit Wiedergabemodus) und Admin-Karten, mit automatischer Kartentyp-Erkennung und Live-Status (Reader/Karte/Programmierstatus) in der Sidebar
 - **Modernes UI**: Dark Theme mit eigenem App-Icon
-- **Installer**: Optionaler Setup-Installer für Windows (Program Files, über „Apps & Features“ deinstallierbar), .deb-Paket für Linux (über `apt`/`dpkg` installier- und deinstallierbar) bzw. .dmg-Abbild mit App-Bundle für macOS, jeweils neben der portablen Programmdatei
+- **Automatische Updates**: Prüft beim Start auf neue GitHub-Releases und zeigt einen Hinweis an
 
-## Installation
+## Installation (für Endanwender)
 
-### Option 1: Installer oder portable EXE (empfohlen)
+Fertige Builds gibt es auf der [Releases-Seite](https://github.com/donschoof/tonuino-manager/releases/latest) – keine Python-Installation nötig.
 
-Für Endanwender ohne Python-Installation:
+| Betriebssystem | Datei | Hinweise |
+| --- | --- | --- |
+| Windows | `Tonuino-Manager-<Version>-Setup.exe` | Installer für `Program Files`, legt Startmenü-/optional Desktop-Verknüpfungen an, über *Einstellungen → Apps & Features* deinstallierbar |
+| macOS | `Tonuino-Manager-<Version>.dmg` | Öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen. Die App ist ad-hoc signiert (kein Apple Developer Account); beim ersten Start ist ein manueller Schritt nötig (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos)) |
+| Linux (Debian/Ubuntu-basiert) | `tonuino-manager_<Version>_amd64.deb` | `sudo apt install ./tonuino-manager_<Version>_amd64.deb`, Deinstallation über `sudo apt remove tonuino-manager` |
 
-- **Installer** (`Tonuino-Manager-<Version>-Setup.exe`): führt durch die Installation nach `Program Files`, legt Start­menü-/optional Desktop-Verknüpfungen an und lässt sich über *Einstellungen → Apps → Apps & Features* wieder deinstallieren.
-- **Portable EXE** (`Tonuino-Manager.exe`): keine Installation nötig, einfach starten. FFmpeg ist bereits eingebettet.
+FFmpeg ist in allen drei Builds bereits enthalten, es muss nichts separat installiert werden.
 
-Beide Dateien werden mit `python build_exe.py` erzeugt (siehe unten) und landen im `dist`-Ordner.
+Portable, nicht-installierte Programmdateien (z. B. für Linux-Distributionen ohne `apt`) lassen sich mit dem [lokalen Build](#eigene-builds-erzeugen) erzeugen.
 
-### Option 2: Als Python-Skript
-
-1. Python 3.10+ installieren
-2. Abhängigkeiten installieren:
-
-```bash
-pip install -r requirements.txt
-```
-
-Unter Linux siehe den Abschnitt [Linux](#linux) weiter unten – dort werden zusätzlich Systempakete benötigt und `pip install` muss in der Regel in einem virtuellen Environment erfolgen (siehe „externally-managed-environment“-Hinweis).
-
-3. Starten:
-
-```bash
-python main.py
-```
-
-FFmpeg muss nicht separat installiert werden – das Paket `imageio-ffmpeg` bringt eine passende FFmpeg-Binary automatisch mit.
-
-### Option 3: EXE / Installer selbst bauen
-
-1. Python 3.10+ installieren
-2. Für den Installer zusätzlich [Inno Setup](https://jrsoftware.org/isdl.php) installieren (optional – ohne Inno Setup wird nur die portable EXE erstellt)
-3. Doppelklick auf `Build_EXE.bat` oder im Terminal:
-
-```bash
-pip install -r requirements.txt
-python build_exe.py
-```
-
-Auf Windows liegen danach im `dist`-Ordner:
-
-- `Tonuino-Manager.exe` – portabel, ohne Installation lauffähig
-- `Tonuino-Manager-<Version>-Setup.exe` – Installer (falls Inno Setup gefunden wurde)
-
-Die Versionsnummer wird dabei automatisch aus `src/core/__init__.py` (`__version__`) übernommen.
-
-### Linux
-
-Zusätzlich zu Python 3.10+ und den pip-Abhängigkeiten wird der PC/SC-Stack für den RFID-Reader sowie das Qt-„xcb“-Plattform-Plugin benötigt (Debian/Ubuntu-Namen, für andere Distributionen entsprechend anpassen). `pyscard` wird beim `pip install` aus dem Quellcode gebaut, daher werden zusätzlich die PC/SC-Entwicklungsheader (`libpcsclite-dev`) sowie `swig` benötigt:
-
-```bash
-sudo apt install pcscd libpcsclite1 libpcsclite-dev libxcb-cursor0 swig
-```
-
-Auf aktuellen Debian/Ubuntu-Versionen verweigert `pip` die Installation direkt ins System (`error: externally-managed-environment`, siehe [PEP 668](https://peps.python.org/pep-0668/)). Empfohlen ist daher ein virtuelles Environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python main.py        # oder: python build_exe.py
-```
-
-Alternativ kann die Prüfung mit `pip install --break-system-packages -r requirements.txt` umgangen werden (nicht empfohlen, da dabei System-Python-Pakete überschrieben werden können).
-
-`build_exe.py` erkennt Linux automatisch und erzeugt statt des Windows-Installers:
-
-- `dist/Tonuino-Manager` – die portable Programmdatei
-- `dist/tonuino-manager_<Version>_amd64.deb` – Installer für Debian/Ubuntu-basierte Distributionen (Menüeintrag, Icon-Integration); Installation über `sudo apt install ./tonuino-manager_<Version>_amd64.deb`, Deinstallation über `sudo apt remove tonuino-manager`
-
-Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich stattdessen direkt `dist/Tonuino-Manager` portabel ausführen.
-
-Der Linux-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)), um fehlende Systembibliotheken frühzeitig zu erkennen.
-
-### macOS
-
-```bash
-pip install -r requirements.txt
-python build_exe.py
-```
-
-Der PC/SC-Stack für den RFID-Reader ist auf macOS bereits Teil des Systems (kein zusätzliches Paket nötig). `build_exe.py` erkennt macOS automatisch und erzeugt statt des Windows-Installers:
-
-- `dist/Tonuino-Manager.app` – die App-Bundle, direkt startbar (z. B. per Doppelklick oder nach Kopieren nach `/Applications`)
-- `dist/Tonuino-Manager-<Version>.dmg` – Abbild zur Verteilung: öffnen und `Tonuino-Manager.app` per Drag & Drop nach `/Applications` ziehen
+### Hinweis zur Signatur (macOS)
 
 Die App wird beim Bauen ad-hoc signiert (kostenlos, ohne Apple Developer Account) – das macht sie auf Apple Silicon überhaupt erst ausführbar (dort verweigert der Kernel unsignierten Code komplett), ersetzt aber keine echte Signatur mit Notarization. Beim ersten Start einer heruntergeladenen (Quarantäne-Flag gesetzte) Kopie zeigt Gatekeeper daher „‚Tonuino-Manager‘ ist beschädigt und sollte in den Papierkorb gelegt werden“ – das ist irreführend formuliert, liegt aber nicht an einer beschädigten Datei, sondern schlicht an der fehlenden Notarization (kostenpflichtiges Apple Developer Program, 99 $/Jahr, samt Einreichung bei Apple). Ein Rechtsklick → „Öffnen“ reicht bei dieser Meldung auf aktuellen macOS-Versionen nicht mehr aus; stattdessen im Terminal die Quarantäne entfernen:
 
@@ -115,7 +42,79 @@ xattr -cr /pfad/zu/Tonuino-Manager.app
 
 Danach lässt sich die App normal per Doppelklick starten.
 
-Der macOS-Build wird bei jedem Push/PR automatisch per GitHub Actions gebaut **und** headless gestartet (siehe [.github/workflows/build.yml](.github/workflows/build.yml)).
+## Am Repo arbeiten (Entwicklung)
+
+Für alle drei Betriebssysteme gilt: Python 3.10+ installieren, Repo klonen, danach in einem **virtuellen Environment** (venv) die Abhängigkeiten aus [requirements.txt](requirements.txt) installieren. Ein venv ist kein Extra-Schritt für Fortgeschrittene, sondern auf allen drei Plattformen empfehlenswert bzw. nötig, damit `pip install` nicht das System-Python verändert.
+
+```bash
+git clone https://github.com/donschoof/tonuino-manager.git
+cd tonuino-manager
+```
+
+### Windows
+
+```powershell
+py -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+Es werden keine zusätzlichen Systempakete benötigt (PC/SC-Unterstützung für den RFID-Reader ist Teil von Windows).
+
+### Linux
+
+Zusätzlich zu Python 3.10+ wird der PC/SC-Stack für den RFID-Reader, das Qt-„xcb“-Plattform-Plugin sowie die Laufzeit-Abhängigkeit von QtMultimedia (Audio-Player) benötigt (Debian/Ubuntu-Namen, für andere Distributionen entsprechend anpassen). `pyscard` wird beim `pip install` aus dem Quellcode gebaut, daher werden zusätzlich die PC/SC-Entwicklungsheader (`libpcsclite-dev`) sowie `swig` benötigt:
+
+```bash
+sudo apt install pcscd libpcsclite1 libpcsclite-dev swig \
+  libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+  libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+  libxcb-xinerama0 libegl1 libpulse0
+```
+
+Auf aktuellen Debian/Ubuntu-Versionen verweigert `pip` die Installation direkt ins System (`error: externally-managed-environment`, siehe [PEP 668](https://peps.python.org/pep-0668/)) – ein venv ist hier also nicht nur empfohlen, sondern in der Regel erforderlich:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+Alternativ kann die Prüfung mit `pip install --break-system-packages -r requirements.txt` umgangen werden (nicht empfohlen, da dabei System-Python-Pakete überschrieben werden können).
+
+### macOS
+
+`pyscard` wird auch auf macOS beim `pip install` aus dem Quellcode gebaut. Dafür werden die Xcode Command Line Tools sowie `swig` benötigt (nicht in macOS enthalten – anders als der PC/SC-Stack selbst, der für den RFID-Reader bereits Teil des Systems ist). Fehlt `swig`, bricht `pip install -r requirements.txt` beim Bauen von `pyscard` ab, und es scheint so, als würde gar nichts installiert werden, obwohl einzelne reine Python-Pakete (z. B. `PyQt6`) sich problemlos installieren lassen:
+
+```bash
+xcode-select --install
+brew install swig
+```
+
+Danach wie gewohnt in einem venv installieren:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+## Eigene Builds erzeugen
+
+Voraussetzung ist das [Entwicklungs-Setup](#am-repo-arbeiten-entwicklung) der jeweiligen Plattform (aktiviertes venv mit installierten Abhängigkeiten). `build_exe.py` erkennt das Betriebssystem automatisch und erzeugt die passende Programmdatei bzw. das passende Installationspaket im `dist`-Ordner. PyInstaller kompiliert nicht plattformübergreifend – der Build muss also auf jeder Zielplattform separat ausgeführt werden.
+
+```bash
+python build_exe.py
+```
+
+- **Windows**: `dist/Tonuino-Manager.exe` (portabel) sowie – falls [Inno Setup](https://jrsoftware.org/isdl.php) installiert ist – `dist/Tonuino-Manager-<Version>-Setup.exe`. Alternativ per Doppelklick auf `Build_EXE.bat`.
+- **Linux**: `dist/Tonuino-Manager` (portabel) sowie `dist/tonuino-manager_<Version>_amd64.deb` (Debian/Ubuntu-basiert, benötigt `dpkg-deb`, i. d. R. bereits vorhanden). Auf nicht-Debian-basierten Distributionen (Fedora, Arch, …) lässt sich nur die portable Datei nutzen.
+- **macOS**: `dist/Tonuino-Manager.app` sowie `dist/Tonuino-Manager-<Version>.dmg` (siehe [macOS-Hinweis](#hinweis-zur-signatur-macos) zur Gatekeeper-Warnung bei selbst gebauten, weitergegebenen Kopien).
+
+Die Versionsnummer wird dabei automatisch aus [src/core/\_\_init\_\_.py](src/core/__init__.py) (`__version__`) übernommen.
 
 ## SD-Karten-Format
 
