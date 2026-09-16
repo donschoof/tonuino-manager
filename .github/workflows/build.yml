@@ -24,12 +24,16 @@ jobs:
         include:
           - os: windows-latest
             name: windows
+            artifact_glob: dist/Tonuino-Manager-*-Setup.exe
           - os: ubuntu-latest
             name: linux
+            artifact_glob: dist/tonuino-manager_*_amd64.deb
           - os: macos-latest
             name: macos-arm64
+            artifact_glob: dist/Tonuino-Manager-*.dmg
           - os: macos-15-intel
             name: macos-intel
+            artifact_glob: dist/Tonuino-Manager-*.dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -120,6 +124,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tonuino-manager-${{ matrix.name }}
-          path: |
-            dist/*
+          path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
