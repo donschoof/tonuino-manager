@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QProgressBar, QSplitter, QInputDialog,
     QAbstractItemView, QProgressDialog, QApplication,
-    QToolButton, QMenu
+    QToolButton, QMenu, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoint
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
@@ -25,10 +25,10 @@ from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, PLAYBACK_MODES
 from core.tonuino_config import TonuinoConfigManager
+from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
 from gui.update_dialog import UpdateDialog
-from gui.tonuino_serial_dialog import TonuinoSerialDialog
 
 
 def resource_path(*parts) -> str:
@@ -201,8 +201,40 @@ class PurgeWorker(QThread):
             self.finished.emit(False, str(e))
 
 
+class TonuinoCardWorker(QThread):
+    """Fuehrt eine Karten-Programmierung ueber den seriell verbundenen TonUINO aus,
+    damit die UI waehrend der Firmware-Menuefuehrung (mehrere Sekunden wegen
+    Sprachansagen) nicht einfriert."""
+    finished = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung (leer bei Erfolg)
+
+    def __init__(self, tonuino: TonuinoSerial, folder: int, mode: int, special: int, admin: bool):
+        super().__init__()
+        self.tonuino = tonuino
+        self.folder = folder
+        self.mode = mode
+        self.special = special
+        self.admin = admin
+
+    def run(self):
+        try:
+            if self.admin:
+                self.tonuino.write_admin_card()
+            else:
+                self.tonuino.write_folder_card(self.folder, self.mode, self.special)
+            self.finished.emit(True, "")
+        except (TonuinoSerialError, ValueError) as e:
+            self.finished.emit(False, str(e))
+        except Exception as e:
+            self.finished.emit(False, f"Unerwarteter Fehler: {e}")
+
+
 class MainWindow(QMainWindow):
     """Hauptfenster des Tonuino-Managers"""
+
+    # Zwei alternative Wege, eine RFID-Karte zu programmieren - siehe
+    # _on_reader_mode_changed(): teilen sich denselben Bereich in der Sidebar.
+    READER_MODE_ACR122U = "acr122u"
+    READER_MODE_TONUINO = "tonuino"
 
     def __init__(self):
         super().__init__()
@@ -211,11 +243,14 @@ class MainWindow(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(1200, 800)
-        
+
         self.sd_card: SDCard = None
         self.audio_converter = AudioConverter()
         self.metadata_manager = MetadataManager()
         self.rfid_reader = RFIDReader()
+        self.tonuino_serial = TonuinoSerial()
+        self._reader_mode = self.READER_MODE_ACR122U
+        self._tonuino_worker: TonuinoCardWorker = None
         self.config_manager: TonuinoConfigManager = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
@@ -403,7 +438,19 @@ class MainWindow(QMainWindow):
 
         rfid_layout.addLayout(title_row)
 
-        status_row = QHBoxLayout()
+        reader_select_row = QHBoxLayout()
+        reader_select_row.setSpacing(8)
+        reader_select_row.addWidget(QLabel("Leser:"))
+        self.reader_mode_combo = QComboBox()
+        self.reader_mode_combo.addItem("ACR122U", self.READER_MODE_ACR122U)
+        self.reader_mode_combo.addItem("TonUINO (seriell)", self.READER_MODE_TONUINO)
+        self.reader_mode_combo.currentIndexChanged.connect(self._on_reader_mode_changed)
+        reader_select_row.addWidget(self.reader_mode_combo, 1)
+        rfid_layout.addLayout(reader_select_row)
+
+        self.acr122u_status_widget = QWidget()
+        status_row = QHBoxLayout(self.acr122u_status_widget)
+        status_row.setContentsMargins(0, 0, 0, 0)
         status_row.setSpacing(8)
 
         # Einheitliche Icons aus Material Icons (Apache-2.0, gebuendelt) statt
@@ -417,7 +464,33 @@ class MainWindow(QMainWindow):
         programmed_tile, self.programmed_icon = self._create_status_tile("", "Ordner")
         status_row.addWidget(programmed_tile)
 
-        rfid_layout.addLayout(status_row)
+        rfid_layout.addWidget(self.acr122u_status_widget)
+
+        self.tonuino_status_widget = QWidget()
+        tonuino_layout = QVBoxLayout(self.tonuino_status_widget)
+        tonuino_layout.setContentsMargins(0, 0, 0, 0)
+        tonuino_layout.setSpacing(6)
+
+        tonuino_port_row = QHBoxLayout()
+        tonuino_port_row.setSpacing(6)
+        self.tonuino_port_combo = QComboBox()
+        tonuino_port_row.addWidget(self.tonuino_port_combo, 1)
+        btn_tonuino_refresh = QPushButton("Aktualisieren")
+        btn_tonuino_refresh.setToolTip("COM-Ports aktualisieren")
+        btn_tonuino_refresh.clicked.connect(self._refresh_tonuino_ports)
+        tonuino_port_row.addWidget(btn_tonuino_refresh)
+        tonuino_layout.addLayout(tonuino_port_row)
+
+        self.btn_tonuino_connect = QPushButton("Verbinden")
+        self.btn_tonuino_connect.clicked.connect(self._on_tonuino_connect_clicked)
+        tonuino_layout.addWidget(self.btn_tonuino_connect)
+
+        self.tonuino_status_label = QLabel("Nicht verbunden.")
+        self.tonuino_status_label.setWordWrap(True)
+        tonuino_layout.addWidget(self.tonuino_status_label)
+
+        rfid_layout.addWidget(self.tonuino_status_widget)
+        self.tonuino_status_widget.setVisible(False)
 
         btn_program_card = QPushButton("Karte programmieren")
         btn_program_card.setObjectName("successButton")
@@ -431,14 +504,6 @@ class MainWindow(QMainWindow):
         btn_program_admin.setEnabled(False)
         self.btn_program_admin = btn_program_admin
         rfid_layout.addWidget(btn_program_admin)
-
-        btn_program_via_tonuino = QPushButton("Karte über TonUINO programmieren...")
-        btn_program_via_tonuino.setToolTip(
-            "Programmiert eine Karte direkt über den am USB angeschlossenen TonUINO "
-            "(benötigt eine Firmware mit aktiviertem #define SerialInputAsCommand)."
-        )
-        btn_program_via_tonuino.clicked.connect(self._program_rfid_card_via_tonuino)
-        rfid_layout.addWidget(btn_program_via_tonuino)
 
         layout.addWidget(rfid_frame)
 
@@ -1360,10 +1425,88 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
 
+    def _on_reader_mode_changed(self, index: int):
+        """Schaltet zwischen den beiden Programmierwegen um (ACR122U-Leser vs.
+        seriell ueber den TonUINO selbst) - beide teilen sich denselben Bereich
+        in der Sidebar, siehe _setup_sidebar()."""
+        self._reader_mode = self.reader_mode_combo.itemData(index)
+        is_tonuino = self._reader_mode == self.READER_MODE_TONUINO
+        self.acr122u_status_widget.setVisible(not is_tonuino)
+        self.tonuino_status_widget.setVisible(is_tonuino)
+        if is_tonuino and self.tonuino_port_combo.count() == 0:
+            self._refresh_tonuino_ports()
+        self._update_program_buttons()
+
+    def _refresh_tonuino_ports(self):
+        """Aktualisiert die Liste der verfuegbaren COM-Ports fuer den TonUINO"""
+        self.tonuino_port_combo.clear()
+        ports = TonuinoSerial.list_ports()
+        if not ports:
+            self.tonuino_port_combo.addItem("Kein COM-Port gefunden", None)
+            self.tonuino_port_combo.setEnabled(False)
+            return
+        self.tonuino_port_combo.setEnabled(True)
+        for p in ports:
+            self.tonuino_port_combo.addItem(f"{p.device} - {p.description}", p.device)
+
+    def _on_tonuino_connect_clicked(self):
+        """Verbindet sich mit dem per USB angeschlossenen TonUINO bzw. trennt
+        eine bestehende Verbindung wieder."""
+        if self.tonuino_serial.is_connected:
+            self.tonuino_serial.disconnect()
+            self.btn_tonuino_connect.setText("Verbinden")
+            self.tonuino_status_label.setText("Nicht verbunden.")
+            self._update_program_buttons()
+            return
+
+        if not TonuinoSerial.serial_available():
+            QMessageBox.warning(
+                self, "Fehler",
+                "Das Paket 'pyserial' ist nicht installiert."
+            )
+            return
+
+        port = self.tonuino_port_combo.currentData()
+        if not port:
+            QMessageBox.information(self, "COM-Port wählen", "Bitte wähle einen COM-Port.")
+            return
+
+        self.tonuino_status_label.setText("Verbinde...")
+        self.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            self.tonuino_serial.connect(port)
+        except TonuinoSerialError as e:
+            self.setEnabled(True)
+            self.tonuino_status_label.setText(f"Verbindung fehlgeschlagen: {e}")
+            QMessageBox.warning(self, "Fehler", str(e))
+            return
+
+        self.setEnabled(True)
+        self.btn_tonuino_connect.setText("Trennen")
+        self.tonuino_status_label.setText(f"Verbunden mit {port}.")
+        self._update_program_buttons()
+
     def _update_program_buttons(self):
         """Schaltet die Programmier-Buttons je nach Kartenstatus UND (fuer
         'Karte programmieren' zusaetzlich) ausgewaehltem Ordner frei/aus.
-        Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon."""
+        Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon.
+        Fuer den TonUINO-seriell-Weg gibt es keine Kartenpraesenz-Erkennung
+        (die Firmware meldet das nicht zurueck) - hier zaehlt nur, ob eine
+        Verbindung besteht."""
+        if self._reader_mode == self.READER_MODE_TONUINO:
+            connected = self.tonuino_serial.is_connected
+            self.btn_program_admin.setEnabled(connected)
+            self.btn_program_card.setEnabled(
+                connected
+                and self.current_folder is not None
+                and not self._is_special_folder(self.current_folder)
+            )
+            # Das Loeschen einzelner Karten-Bytes ist ueber die TonUINO-Admin-
+            # Menuefuehrung nicht vorgesehen (nur ueber den ACR122U moeglich)
+            self._set_erase_icon_state(False)
+            return
+
         self.btn_program_admin.setEnabled(self._rfid_card_present)
         self.btn_program_card.setEnabled(
             self._rfid_card_present
@@ -1383,6 +1526,8 @@ class MainWindow(QMainWindow):
 
     def _check_rfid_card(self):
         """Prueft periodisch Reader- und Kartenstatus und aktualisiert die Anzeige automatisch"""
+        if self._reader_mode != self.READER_MODE_ACR122U:
+            return
         if not self.rfid_reader.scard_available:
             return
 
@@ -1446,6 +1591,10 @@ class MainWindow(QMainWindow):
 
     def _program_rfid_card(self):
         """Programmiert eine RFID-Karte"""
+        if self._reader_mode == self.READER_MODE_TONUINO:
+            self._program_rfid_card_via_serial()
+            return
+
         if not self.current_folder or self._is_special_folder(self.current_folder):
             QMessageBox.warning(
                 self,
@@ -1525,6 +1674,10 @@ class MainWindow(QMainWindow):
 
     def _program_admin_card(self):
         """Programmiert eine TonUINO-Admin-Karte (keinem Ordner zugeordnet)"""
+        if self._reader_mode == self.READER_MODE_TONUINO:
+            self._program_admin_card_via_serial()
+            return
+
         if not self.rfid_reader.is_card_present():
             QMessageBox.information(
                 self,
@@ -1565,19 +1718,110 @@ class MainWindow(QMainWindow):
                     f"Fehler beim Programmieren: {e}"
                 )
 
-    def _program_rfid_card_via_tonuino(self):
-        """Oeffnet den Dialog zum Programmieren einer Karte direkt ueber den
-        per USB angeschlossenen TonUINO (statt ueber den ACR122U-Leser)."""
-        folder_index = None
-        folder_name = ""
-        track_count = 1
-        if self.current_folder and not self._is_special_folder(self.current_folder):
-            folder_index = self.current_folder.index
-            folder_name = self._resolve_folder_name(self.current_folder)
-            track_count = max(self.current_folder.track_count, 1)
+    def _program_rfid_card_via_serial(self):
+        """TonUINO-seriell-Pendant zu _program_rfid_card(): steuert das Admin-Menue
+        des per USB verbundenen TonUINO fern ('Neue Karte anlegen'), waehrend die
+        Karte auf dessen eigenem Leser liegt (siehe core.tonuino_serial). Anders
+        als beim ACR122U-Weg kann keine Kartenpraesenz erkannt werden."""
+        if not self.current_folder or self._is_special_folder(self.current_folder):
+            QMessageBox.warning(
+                self,
+                "Kein Ordner",
+                "Bitte wähle zuerst einen Ordner aus."
+            )
+            return
 
-        dialog = TonuinoSerialDialog(folder_index, folder_name, track_count, parent=self)
-        dialog.exec()
+        if not self.tonuino_serial.is_connected:
+            QMessageBox.information(
+                self,
+                "Nicht verbunden",
+                "Bitte zuerst mit dem TonUINO verbinden."
+            )
+            return
+
+        mode_labels = [label for label, _ in self.RFID_MODES]
+        mode_label, ok = QInputDialog.getItem(
+            self,
+            "Wiedergabemodus",
+            f"Modus für Ordner '{self._resolve_folder_name(self.current_folder)}':",
+            mode_labels,
+            1,  # Standard: Album
+            False
+        )
+        if not ok:
+            return
+
+        mode = dict(self.RFID_MODES)[mode_label]
+        special = 0
+
+        if mode == 4:  # Einzelner Track
+            track_count = max(self.current_folder.track_count, 1)
+            special, ok = QInputDialog.getInt(
+                self,
+                "Track auswählen",
+                "Welcher Track soll gespielt werden?",
+                1, 1, track_count
+            )
+            if not ok:
+                return
+
+        confirmed = confirm_action(
+            self,
+            "Karte programmieren",
+            f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann für Ordner "
+            f"\'{self._resolve_folder_name(self.current_folder)}\' programmiert werden?",
+            default_no=False
+        )
+        if not confirmed:
+            return
+
+        self._start_tonuino_write(self.current_folder.index, mode, special, admin=False)
+
+    def _program_admin_card_via_serial(self):
+        """TonUINO-seriell-Pendant zu _program_admin_card()"""
+        if not self.tonuino_serial.is_connected:
+            QMessageBox.information(
+                self,
+                "Nicht verbunden",
+                "Bitte zuerst mit dem TonUINO verbinden."
+            )
+            return
+
+        confirmed = confirm_action(
+            self,
+            "Admin-Karte programmieren",
+            "Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann als "
+            "Admin-Karte programmiert werden?\n\nEine Admin-Karte ist keinem "
+            "Ordner zugeordnet und öffnet am TonUINO das Admin-Menü.",
+            default_no=False
+        )
+        if not confirmed:
+            return
+
+        self._start_tonuino_write(0, 0, 0, admin=True)
+
+    def _start_tonuino_write(self, folder: int, mode: int, special: int, admin: bool):
+        """Startet die Karten-Programmierung ueber den seriell verbundenen
+        TonUINO in einem Hintergrund-Thread (die Firmware-Menuefuehrung braucht
+        wegen Sprachansagen mehrere Sekunden, siehe TonuinoCardWorker)."""
+        self.btn_program_card.setEnabled(False)
+        self.btn_program_admin.setEnabled(False)
+        self.tonuino_status_label.setText("Programmiere Karte über TonUINO - bitte warten...")
+
+        self._tonuino_worker = TonuinoCardWorker(self.tonuino_serial, folder, mode, special, admin)
+        self._tonuino_worker.finished.connect(self._on_tonuino_write_finished)
+        self._tonuino_worker.start()
+
+    def _on_tonuino_write_finished(self, success: bool, error: str):
+        self._update_program_buttons()
+        if success:
+            port = self.tonuino_port_combo.currentData()
+            self.tonuino_status_label.setText(f"Verbunden mit {port}." if port else "Verbunden.")
+            self.status_bar.showMessage("Karte erfolgreich programmiert!")
+            QMessageBox.information(self, "Erfolg", "Die Karte wurde erfolgreich programmiert!")
+        else:
+            self.tonuino_status_label.setText(f"Fehler: {error}")
+            QMessageBox.warning(self, "Fehler", f"Die Karte konnte nicht programmiert werden:\n{error}")
 
     def _set_erase_icon_state(self, enabled: bool):
         """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
@@ -1758,4 +2002,6 @@ class MainWindow(QMainWindow):
         self.player_bar.stop()
         if self.rfid_reader:
             self.rfid_reader.disconnect()
+        if self.tonuino_serial.is_connected:
+            self.tonuino_serial.disconnect()
         event.accept()

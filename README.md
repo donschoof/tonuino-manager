@@ -154,7 +154,7 @@ Programmierbar sind:
 
 ### Alternative: Programmieren direkt über den TonUINO
 
-Wer keinen eigenen RFID-Leser hat, kann Karten stattdessen über den TonUINO selbst programmieren lassen – dafür muss die Firmware ([TonUINO-TNG](https://github.com/tonuino/TonUINO-TNG)) mit aktiviertem `#define SerialInputAsCommand` (in `src/constants.hpp`) gebaut sein. Über den Button **"Karte über TonUINO programmieren..."** verbindet sich der Tonuino-Manager per USB-Seriell mit dem Gerät und steuert dessen Admin-Menü ("Neue Karte anlegen") fern, während die Karte auf dem TonUINO-eigenen Leser liegt – die Karte wird dabei genauso beschrieben, wie es die Firmware auch bei Bedienung per Tasten täte.
+Wer keinen eigenen RFID-Leser hat, kann Karten stattdessen über den TonUINO selbst programmieren lassen – dafür muss die Firmware ([TonUINO-TNG](https://github.com/tonuino/TonUINO-TNG)) mit aktiviertem `#define SerialInputAsCommand` (in `src/constants.hpp`) gebaut sein. Im Dropdown **"Leser"** im RFID-Bereich der Sidebar lässt sich zwischen **ACR122U** (Standard) und **TonUINO (seriell)** umschalten; im TonUINO-Modus per USB-Seriell verbinden und dann wie gewohnt über "Karte programmieren"/"Admin-Karte programmieren" fortfahren – der Tonuino-Manager steuert dabei das Admin-Menü des Geräts ("Neue Karte anlegen") fern, während die Karte auf dem TonUINO-eigenen Leser liegt, und beschreibt sie genauso, wie es die Firmware auch bei Bedienung per Tasten täte. Das Löschen einzelner Karten (Papierkorb-Icon) ist weiterhin nur über den ACR122U möglich.
 
 ## Lizenz
 
