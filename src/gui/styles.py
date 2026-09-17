@@ -189,6 +189,23 @@ QLabel#folderNameLabel {
     font-size: 10pt;
 }
 
+/* Read-only Ordnerliste: mp3/advert Tonuio-Systemordner */
+QLabel#folderBadgeSpecial {
+    background-color: #1e1e2e;
+    color: #585b70;
+    border: 1px solid #313244;
+    border-radius: 6px;
+    font-weight: bold;
+    font-size: 9pt;
+    padding: 2px 6px;
+}
+
+QLabel#folderNameLabelSpecial {
+    color: #585b70;
+    font-size: 10pt;
+    font-style: italic;
+}
+
 /* === Tree Widget === */
 QTreeWidget {
     background-color: #1e1e2e;

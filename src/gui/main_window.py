@@ -182,6 +182,23 @@ class TrackAddWorker(QThread):
         self.finished.emit(added)
 
 
+class PurgeWorker(QThread):
+    """Thread fuer das Bereinigen der SD-Karte (Whitelist-Purge), damit die
+    UI waehrend der Dateisystem-Operationen nicht einfriert."""
+    finished = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung (leer bei Erfolg)
+
+    def __init__(self, sd_card: SDCard):
+        super().__init__()
+        self.sd_card = sd_card
+
+    def run(self):
+        try:
+            self.sd_card.purge()
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 class MainWindow(QMainWindow):
     """Hauptfenster des Tonuino-Managers"""
 
@@ -345,7 +362,14 @@ class MainWindow(QMainWindow):
         btn_new_folder.setEnabled(False)
         self.btn_new_folder = btn_new_folder
         layout.addWidget(btn_new_folder)
-        
+
+        btn_purge_card = QPushButton("SD-Karte bereinigen")
+        btn_purge_card.setObjectName("dangerButton")
+        btn_purge_card.clicked.connect(self._purge_sd_card)
+        btn_purge_card.setEnabled(False)
+        self.btn_purge_card = btn_purge_card
+        layout.addWidget(btn_purge_card)
+
         layout.addWidget(QLabel("Ordner:"))
         self.folder_list = QListWidget()
         self.folder_list.setObjectName("folderList")
@@ -506,12 +530,14 @@ class MainWindow(QMainWindow):
         btn_add_tracks.setObjectName("primaryButton")
         btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
         btn_add_tracks.clicked.connect(self._add_tracks)
+        self.btn_add_tracks = btn_add_tracks
         header_layout.addWidget(btn_add_tracks)
 
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("dangerButton")
         btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         btn_delete_folder.clicked.connect(self._delete_folder)
+        self.btn_delete_folder = btn_delete_folder
         header_layout.addWidget(btn_delete_folder)
 
         folder_layout.addLayout(header_layout)
@@ -644,6 +670,7 @@ class MainWindow(QMainWindow):
                 f"{self.sd_card.total_tracks} Tracks"
             )
             self.btn_new_folder.setEnabled(True)
+            self.btn_purge_card.setEnabled(True)
             self._populate_folder_list()
             
             if self.config_manager:
@@ -684,7 +711,9 @@ class MainWindow(QMainWindow):
         self.player_bar.stop_and_clear()
         self.stack.setCurrentWidget(self.welcome_widget)
         self.btn_new_folder.setEnabled(False)
+        self.btn_purge_card.setEnabled(False)
         self._update_program_buttons()
+        self._update_folder_action_buttons()
 
         self.status_bar.showMessage("SD-Karte wurde entfernt")
         QMessageBox.warning(
@@ -695,7 +724,8 @@ class MainWindow(QMainWindow):
         )
 
     def _populate_folder_list(self):
-        """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen"""
+        """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen,
+        gefolgt von den (nicht editierbaren) Tonuio-Systemordnern mp3/advert"""
         self.folder_list.clear()
 
         if not self.sd_card:
@@ -709,7 +739,23 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, idx)
             item.setSizeHint(QSize(0, 36))
             self.folder_list.addItem(item)
-            self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder.index, name))
+            self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder, name))
+
+        for special_name in SDCard.SPECIAL_FOLDER_NAMES:
+            folder = self.sd_card.special_folders.get(special_name)
+            if not folder:
+                continue
+
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, special_name)
+            item.setSizeHint(QSize(0, 36))
+            self.folder_list.addItem(item)
+            self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder, folder.name))
+
+    def _is_special_folder(self, folder: Optional[Folder]) -> bool:
+        """True, wenn folder einer der nicht editierbaren Tonuio-Systemordner
+        (mp3/advert) ist"""
+        return folder is not None and folder.is_special
 
     def _resolve_folder_name(self, folder: Folder) -> str:
         """Ermittelt den Anzeigenamen eines Ordners aus dem Album-Tag der ersten
@@ -727,29 +773,30 @@ class MainWindow(QMainWindow):
         self._folder_name_cache[folder.index] = name
         return name
 
-    def _create_folder_item_widget(self, folder_index: int, name: str) -> QWidget:
-        """Erstellt das Zeilen-Widget fuer die Ordnerliste: Nummer-Badge + Name"""
+    def _create_folder_item_widget(self, folder: Folder, name: str) -> QWidget:
+        """Erstellt das Zeilen-Widget fuer die Ordnerliste: Nummer-/Namens-Badge + Name.
+        Systemordner (mp3/advert) werden in einem gedimmten, nicht editierbaren Stil dargestellt."""
         widget = QWidget()
         row = QHBoxLayout(widget)
         row.setContentsMargins(6, 2, 6, 2)
         row.setSpacing(10)
 
-        badge = QLabel(f"{folder_index:02d}")
-        badge.setObjectName("folderBadge")
+        badge = QLabel(folder.name if folder.is_special else f"{folder.index:02d}")
+        badge.setObjectName("folderBadgeSpecial" if folder.is_special else "folderBadge")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         badge.setMinimumSize(34, 24)
         row.addWidget(badge)
 
         name_label = QLabel(name)
-        name_label.setObjectName("folderNameLabel")
+        name_label.setObjectName("folderNameLabelSpecial" if folder.is_special else "folderNameLabel")
         row.addWidget(name_label, 1)
 
         return widget
-    
+
     def _on_folder_selected(self, item: QListWidgetItem):
         """Wird aufgerufen wenn ein Ordner ausgewaehlt wird"""
-        folder_idx = item.data(Qt.ItemDataRole.UserRole)
-        self.current_folder = self.sd_card.get_folder(folder_idx)
+        identity = item.data(Qt.ItemDataRole.UserRole)
+        self.current_folder = self.sd_card.get_any_folder(identity)
 
         if self.current_folder:
             self._show_folder(self.current_folder)
@@ -787,9 +834,9 @@ class MainWindow(QMainWindow):
     def _show_folder(self, folder: Folder):
         """Zeigt einen Ordner an"""
         self.stack.setCurrentWidget(self.folder_widget)
-        
-        self.folder_title.setText(self._resolve_folder_name(folder))
-        
+
+        self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
+
         pixmap = self._get_folder_cover_pixmap(folder)
         if pixmap:
             scaled = pixmap.scaled(
@@ -800,21 +847,37 @@ class MainWindow(QMainWindow):
             self.cover_label.setPixmap(scaled)
         else:
             self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
-        
-        info_text = (
-            f"Ordner-Nummer: {folder.index:02d}\n"
-            f"Anzahl Tracks: {folder.track_count}\n"
-            f"Pfad: {folder.path}"
-        )
-        
-        if self.config_manager:
-            mode = self.config_manager.get_folder_mode(folder.index)
-            if mode:
-                info_text += f"\nWiedergabemodus: {mode}"
-        
+
+        if folder.is_special:
+            info_text = (
+                f"Tonuio-Systemordner: {folder.name}\n"
+                f"Anzahl Tracks: {folder.track_count}\n"
+                f"Pfad: {folder.path}"
+            )
+        else:
+            info_text = (
+                f"Ordner-Nummer: {folder.index:02d}\n"
+                f"Anzahl Tracks: {folder.track_count}\n"
+                f"Pfad: {folder.path}"
+            )
+
+            if self.config_manager:
+                mode = self.config_manager.get_folder_mode(folder.index)
+                if mode:
+                    info_text += f"\nWiedergabemodus: {mode}"
+
         self.folder_info.setText(info_text)
 
         self._populate_track_list(folder)
+        self._update_folder_action_buttons()
+
+    def _update_folder_action_buttons(self):
+        """Schaltet die ordnerbezogenen Bearbeiten-Aktionen frei/aus - Tonuio-
+        Systemordner (mp3/advert) sind nur einseh- und abspielbar, aber nicht editierbar."""
+        editable = self.current_folder is not None and not self._is_special_folder(self.current_folder)
+        self.btn_add_tracks.setEnabled(editable)
+        self.btn_delete_folder.setEnabled(editable)
+        self.cover_label.setEnabled(editable)
 
     def _populate_track_list(self, folder: Folder):
         """Baut die Track-Liste eines Ordners neu auf (liest Metadaten je Track).
@@ -868,9 +931,59 @@ class MainWindow(QMainWindow):
             "Maximale Anzahl von 99 Ordnern erreicht!"
         )
 
+    def _purge_sd_card(self):
+        """Bereinigt die SD-Karte: entfernt alles, was nicht zur Tonuio-Struktur
+        gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien auch
+        innerhalb dieser Ordner auf und nummeriert Ordner/Tracks anschliessend
+        luecken- und kollisionsfrei durch."""
+        if not self.sd_card:
+            return
+
+        confirmed = confirm_action(
+            self,
+            "SD-Karte bereinigen",
+            "Dies entfernt unwiderruflich alle Dateien und Ordner, die nicht zur "
+            "Tonuino-Struktur gehören (auch Fremddateien innerhalb von 'mp3'/"
+            "'advert'). Leere Ordner werden gelöscht und alle Ordner- und "
+            "Track-Nummern werden lückenlos neu vergeben.\n\n"
+            "Fortfahren?"
+        )
+        if not confirmed:
+            return
+
+        self.btn_purge_card.setEnabled(False)
+        self.status_bar.showMessage("SD-Karte wird bereinigt...")
+
+        self._purge_worker = PurgeWorker(self.sd_card)
+        self._purge_worker.finished.connect(self._on_purge_finished)
+        self._purge_worker.start()
+
+    def _on_purge_finished(self, success: bool, error_message: str):
+        """Wird aufgerufen, wenn der Bereinigungs-Thread fertig ist"""
+        if not success:
+            self.btn_purge_card.setEnabled(True)
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Bereinigen: {error_message}")
+            return
+
+        if self.config_manager:
+            self.config_manager.config.folder_settings.clear()
+            self.config_manager.save()
+
+        self.current_folder = None
+        self._folder_name_cache.clear()
+        self.stack.setCurrentWidget(self.welcome_widget)
+        self._populate_folder_list()
+        self._update_program_buttons()
+        self._update_folder_action_buttons()
+        self.btn_purge_card.setEnabled(True)
+        self.status_bar.showMessage(
+            f"SD-Karte bereinigt: {self.sd_card.folder_count} Ordner, "
+            f"{self.sd_card.total_tracks} Tracks"
+        )
+
     def _delete_folder(self):
         """Loescht den aktuellen Ordner samt Inhalt unwiderruflich von der SD-Karte"""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
         folder = self.current_folder
@@ -893,13 +1006,14 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.welcome_widget)
             self._populate_folder_list()
             self._update_program_buttons()
+            self._update_folder_action_buttons()
             self.status_bar.showMessage(f"Ordner {folder.index:02d} gelöscht")
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
 
     def _add_tracks(self):
         """Fuegt Tracks zum aktuellen Ordner hinzu (im Hintergrund, mit Fortschrittsanzeige)"""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
         files, _ = QFileDialog.getOpenFileNames(
@@ -962,7 +1076,7 @@ class MainWindow(QMainWindow):
     def _set_folder_cover(self):
         """Setzt das Cover fuer den aktuellen Ordner - wird in die ID3-Metadaten
         aller Tracks des Ordners uebernommen (das Cover wird von dort geladen)."""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
         if not self.current_folder.tracks:
@@ -1010,6 +1124,9 @@ class MainWindow(QMainWindow):
     
     def _on_track_double_clicked(self, item: QListWidgetItem):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
+        if self._is_special_folder(self.current_folder):
+            return
+
         track = item.data(Qt.ItemDataRole.UserRole)
         if track:
             self._show_track_editor(track)
@@ -1034,10 +1151,12 @@ class MainWindow(QMainWindow):
 
     def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
         """Aktiviert/deaktiviert die Nach-oben/unten-Buttons je nachdem, ob ein
-        Track (einzeln) ausgewaehlt ist"""
+        Track (einzeln) ausgewaehlt ist. Abspielen bleibt fuer Systemordner
+        (mp3/advert) erlaubt, Umsortieren nicht."""
         has_current = current is not None
-        self.btn_move_track_up.setEnabled(has_current)
-        self.btn_move_track_down.setEnabled(has_current)
+        editable = not self._is_special_folder(self.current_folder)
+        self.btn_move_track_up.setEnabled(has_current and editable)
+        self.btn_move_track_down.setEnabled(has_current and editable)
         self.btn_play_track.setEnabled(has_current)
 
     def _play_selected_track(self):
@@ -1088,7 +1207,7 @@ class MainWindow(QMainWindow):
             self.track_list.item(row).checkState() == Qt.CheckState.Checked
             for row in range(self.track_list.count())
         )
-        self.btn_delete_tracks.setEnabled(any_checked)
+        self.btn_delete_tracks.setEnabled(any_checked and not self._is_special_folder(self.current_folder))
 
     def _get_checked_tracks(self) -> list:
         return [
@@ -1101,7 +1220,7 @@ class MainWindow(QMainWindow):
         """Loescht die per Checkbox ausgewaehlten Tracks von der SD-Karte und
         nummeriert die verbleibenden Tracks fortlaufend um (keine Luecken, wie
         von Tonuino benoetigt)"""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
         tracks = self._get_checked_tracks()
@@ -1129,7 +1248,7 @@ class MainWindow(QMainWindow):
         """Verschiebt den aktuell (einzeln) ausgewaehlten Track um eine Position
         nach oben (delta=-1) oder unten (delta=1) und benennt die Dateien auf
         der SD-Karte entsprechend fortlaufend um."""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
         current_item = self.track_list.currentItem()
@@ -1158,7 +1277,11 @@ class MainWindow(QMainWindow):
         'Karte programmieren' zusaetzlich) ausgewaehltem Ordner frei/aus.
         Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon."""
         self.btn_program_admin.setEnabled(self._rfid_card_present)
-        self.btn_program_card.setEnabled(self._rfid_card_present and self.current_folder is not None)
+        self.btn_program_card.setEnabled(
+            self._rfid_card_present
+            and self.current_folder is not None
+            and not self._is_special_folder(self.current_folder)
+        )
         self._set_erase_icon_state(self._rfid_card_present and self._rfid_card_programmed)
 
     def _update_card_status(self, present: bool):
@@ -1242,7 +1365,7 @@ class MainWindow(QMainWindow):
 
     def _program_rfid_card(self):
         """Programmiert eine RFID-Karte"""
-        if not self.current_folder:
+        if not self.current_folder or self._is_special_folder(self.current_folder):
             QMessageBox.warning(
                 self,
                 "Kein Ordner",

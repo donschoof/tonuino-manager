@@ -33,11 +33,14 @@ class Track:
 
 @dataclass
 class Folder:
-    """Repraesentiert einen Tonuio-Ordner (01-99)"""
-    index: int
+    """Repraesentiert einen Tonuio-Ordner (01-99) oder einen Tonuio-Systemordner
+    (mp3/advert, dann ist index=None, name gesetzt und is_special=True)"""
+    index: Optional[int]
     path: str
     tracks: List[Track] = field(default_factory=list)
     cover_path: str = ""
+    name: Optional[str] = None
+    is_special: bool = False
 
     @property
     def track_count(self) -> int:
@@ -46,13 +49,15 @@ class Folder:
 
 class SDCard:
     """Repraesentiert eine Tonuio SD-Karte"""
-    
+
     FOLDER_PATTERN = re.compile(r'^(\d{2})$')
     TRACK_PATTERN = re.compile(r'^(\d{3})\.mp3$', re.IGNORECASE)
-    
+    SPECIAL_FOLDER_NAMES = ("mp3", "advert")
+
     def __init__(self, path: str):
         self.path = Path(path)
         self.folders: Dict[int, Folder] = {}
+        self.special_folders: Dict[str, Folder] = {}
         self.config_path = self.path / "tonuio.cfg"
         self.is_valid_tonuino = False
 
@@ -70,41 +75,56 @@ class SDCard:
         """Erkennt ob die SD-Karte Tonuio-Struktur hat"""
         mp3_count = 0
         folder_count = 0
-        
+
         for item in self.path.iterdir():
             if item.is_dir():
-                if self.FOLDER_PATTERN.match(item.name):
+                if self.FOLDER_PATTERN.match(item.name) or item.name in self.SPECIAL_FOLDER_NAMES:
                     folder_count += 1
             elif item.suffix.lower() == '.mp3':
                 mp3_count += 1
-        
+
         return folder_count > 0 or mp3_count > 0
-    
+
     def _scan_folders(self):
-        """Scansi alle Tonuio-Ordner"""
+        """Scansi alle Tonuio-Ordner sowie die Tonuio-Systemordner (mp3/advert)"""
         self.folders.clear()
-        
+        self.special_folders.clear()
+
         for item in sorted(self.path.iterdir()):
             if not item.is_dir():
                 continue
-                
+
+            if item.name in self.SPECIAL_FOLDER_NAMES:
+                folder = Folder(
+                    index=None,
+                    path=str(item),
+                    name=item.name,
+                    is_special=True
+                )
+
+                self._scan_tracks(folder)
+                self._find_folder_cover(folder)
+
+                self.special_folders[item.name] = folder
+                continue
+
             match = self.FOLDER_PATTERN.match(item.name)
             if not match:
                 continue
-                
+
             folder_index = int(match.group(1))
-            
+
             if item.name.lower() == "admin":
                 continue
-            
+
             folder = Folder(
                 index=folder_index,
                 path=str(item)
             )
-            
+
             self._scan_tracks(folder)
             self._find_folder_cover(folder)
-            
+
             self.folders[folder_index] = folder
     
     def _scan_tracks(self, folder: Folder):
@@ -165,6 +185,18 @@ class SDCard:
         """Gibt einen Ordner zurueck"""
         return self.folders.get(index)
 
+    def get_special_folder(self, name: str) -> Optional[Folder]:
+        """Gibt einen Tonuio-Systemordner (mp3/advert) zurueck"""
+        return self.special_folders.get(name)
+
+    def get_any_folder(self, identity) -> Optional[Folder]:
+        """Gibt einen Ordner unabhaengig davon zurueck, ob er ueber seine
+        Nummer (int, normaler Ordner) oder seinen Namen (str, Systemordner
+        mp3/advert) identifiziert wird"""
+        if isinstance(identity, int):
+            return self.folders.get(identity)
+        return self.special_folders.get(identity)
+
     def delete_folder(self, folder_index: int):
         """Loescht einen Ordner samt Inhalt von der SD-Karte"""
         folder = self.folders.get(folder_index)
@@ -215,6 +247,74 @@ class SDCard:
             updated_tracks.append(track)
 
         folder.tracks = updated_tracks
+
+    def renumber_folders(self):
+        """Schliesst Luecken in der 01-99-Ordnernummerierung (z.B. nach dem
+        Loeschen eines Ordners). Systemordner (mp3/advert) werden nie
+        umbenannt. Wie reorder_tracks() wird zunaechst auf temporaere Namen
+        umbenannt, damit sich Ziel- und Quellname nicht ueberschneiden koennen
+        (z.B. beim Verschieben von 03 nach 01)."""
+        ordered = [self.folders[i] for i in sorted(self.folders.keys())]
+
+        temp_paths = []
+        for folder in ordered:
+            temp_path = self.path / f".tmp_{Path(folder.path).name}"
+            Path(folder.path).rename(temp_path)
+            temp_paths.append(temp_path)
+
+        new_folders: Dict[int, Folder] = {}
+        for position, (folder, temp_path) in enumerate(zip(ordered, temp_paths), start=1):
+            final_path = self.path / f"{position:02d}"
+            temp_path.rename(final_path)
+
+            folder.index = position
+            folder.path = str(final_path)
+            self._scan_tracks(folder)
+            self._find_folder_cover(folder)
+            new_folders[position] = folder
+
+        self.folders = new_folders
+
+    def purge(self):
+        """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
+        gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien
+        auch innerhalb dieser Ordner auf und nummeriert Ordner sowie Tracks
+        anschliessend luecken- und kollisionsfrei durch."""
+        allowed_dir = lambda name: bool(self.FOLDER_PATTERN.match(name)) or name in self.SPECIAL_FOLDER_NAMES
+
+        # 1. Root-Ebene: lose Dateien loeschen, nicht erlaubte Verzeichnisse rekursiv loeschen
+        for item in list(self.path.iterdir()):
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir() and not allowed_dir(item.name):
+                shutil.rmtree(item)
+
+        # 2. Innerhalb erlaubter Verzeichnisse: alles ausser mp3-Dateien entfernen
+        for item in self.path.iterdir():
+            if not item.is_dir() or not allowed_dir(item.name):
+                continue
+
+            for child in item.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                elif child.suffix.lower() != ".mp3":
+                    child.unlink()
+
+        # 3. In-Memory-Zustand neu aufbauen
+        self.scan()
+
+        # 4. Numerierte Ordner, die jetzt leer sind, entfernen
+        for idx in list(self.folders.keys()):
+            if self.folders[idx].track_count == 0:
+                self.delete_folder(idx)
+
+        # 5. Verbleibende mp3s je numeriertem Ordner luecken- und kollisionsfrei
+        #    durchnummerieren (Systemordner mp3/advert werden nicht sortiert)
+        for folder in self.folders.values():
+            self.reorder_tracks(folder, sorted(folder.tracks, key=lambda t: t.index))
+
+        # 6. Luecken in der 01-99-Ordnernummerierung schliessen
+        self.renumber_folders()
 
     @property
     def folder_count(self) -> int:
