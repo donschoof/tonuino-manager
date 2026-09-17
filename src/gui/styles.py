@@ -22,6 +22,18 @@ QMainWindow {
     background-color: #1e1e2e;
 }
 
+/* === Dialoge (QDialog, QMessageBox, QInputDialog) ===
+   Ohne diese Regel bleibt der Dialog-Hintergrund beim hellen
+   Windows-Standard, waehrend QWidget weiter unten die Schrift hell faerbt -
+   das ergibt helle Schrift auf hellem Grund und damit kaum lesbare Dialoge. */
+QDialog, QMessageBox {
+    background-color: #1e1e2e;
+}
+
+QMessageBox QLabel {
+    color: #cdd6f4;
+}
+
 QWidget {
     color: #cdd6f4;
     font-family: __FONT_FAMILY__'Arial', sans-serif;
@@ -302,6 +314,20 @@ QLineEdit {
 }
 
 QLineEdit:focus {
+    border-color: #89b4fa;
+}
+
+/* === Text Edit === */
+QTextEdit {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 8px;
+    selection-background-color: #89b4fa;
+}
+
+QTextEdit:focus {
     border-color: #89b4fa;
 }
 

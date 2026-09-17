@@ -47,6 +47,19 @@ class Folder:
         return len(self.tracks)
 
 
+@dataclass
+class PurgePreview:
+    """Vorschau dessen, was SDCard.purge() entfernen wuerde - fuer die
+    Bestaetigungsabfrage vor dem eigentlichen (unwiderruflichen) Bereinigen."""
+    root_files: List[str] = field(default_factory=list)
+    root_dirs: List[str] = field(default_factory=list)
+    foreign_items_in_folders: int = 0
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.root_files and not self.root_dirs and not self.foreign_items_in_folders
+
+
 class SDCard:
     """Repraesentiert eine Tonuio SD-Karte"""
 
@@ -274,6 +287,29 @@ class SDCard:
             new_folders[position] = folder
 
         self.folders = new_folders
+
+    def preview_purge(self) -> PurgePreview:
+        """Ermittelt, was purge() entfernen wuerde, ohne dabei etwas zu
+        loeschen - nutzt dieselbe Whitelist-Logik wie purge()."""
+        allowed_dir = lambda name: bool(self.FOLDER_PATTERN.match(name)) or name in self.SPECIAL_FOLDER_NAMES
+
+        preview = PurgePreview()
+
+        for item in self.path.iterdir():
+            if item.is_file():
+                preview.root_files.append(item.name)
+            elif item.is_dir() and not allowed_dir(item.name):
+                preview.root_dirs.append(item.name)
+
+        for item in self.path.iterdir():
+            if not item.is_dir() or not allowed_dir(item.name):
+                continue
+
+            for child in item.iterdir():
+                if child.is_dir() or child.suffix.lower() != ".mp3":
+                    preview.foreign_items_in_folders += 1
+
+        return preview
 
     def purge(self):
         """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
