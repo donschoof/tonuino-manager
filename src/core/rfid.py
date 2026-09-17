@@ -36,6 +36,18 @@ class TonuinoCardData:
         return self.mode == 0xFF
 
 
+# Wiedergabemodi wie von der original TonUINO-Firmware erwartet (chip_card.hpp:
+# pmode_t) - von beiden Programmierwegen (ACR122U-Leser und TonUINO-seriell)
+# gemeinsam genutzt, damit sie nicht auseinanderlaufen.
+PLAYBACK_MODES = [
+    ("Hörspiel (zufällige Wiedergabe, kein Fortschritt)", 1),
+    ("Album (alle Tracks der Reihe nach)", 2),
+    ("Party (alle Tracks in zufälliger Reihenfolge)", 3),
+    ("Einzelner Track", 4),
+    ("Hörbuch (Fortschritt wird gespeichert)", 5),
+]
+
+
 class CardType(Enum):
     """Unterstuetzte Kartentypen (entspricht den PICC-Typen aus TonUINO-TNG/chip_card.cpp:
     MIFARE_MINI, MIFARE_1K, MIFARE_4K, MIFARE_UL)"""

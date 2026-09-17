@@ -22,11 +22,12 @@ from core import __version__
 from core.sd_card import SDCard, Folder, Track
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
-from core.rfid import RFIDReader
+from core.rfid import RFIDReader, PLAYBACK_MODES
 from core.tonuino_config import TonuinoConfigManager
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
 from gui.update_dialog import UpdateDialog
+from gui.tonuino_serial_dialog import TonuinoSerialDialog
 
 
 def resource_path(*parts) -> str:
@@ -429,6 +430,14 @@ class MainWindow(QMainWindow):
         btn_program_admin.setEnabled(False)
         self.btn_program_admin = btn_program_admin
         rfid_layout.addWidget(btn_program_admin)
+
+        btn_program_via_tonuino = QPushButton("Karte über TonUINO programmieren...")
+        btn_program_via_tonuino.setToolTip(
+            "Programmiert eine Karte direkt über den am USB angeschlossenen TonUINO "
+            "(benötigt eine Firmware mit aktiviertem #define SerialInputAsCommand)."
+        )
+        btn_program_via_tonuino.clicked.connect(self._program_rfid_card_via_tonuino)
+        rfid_layout.addWidget(btn_program_via_tonuino)
 
         layout.addWidget(rfid_frame)
 
@@ -1354,14 +1363,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"RFID-Fehler: {e}")
             self._update_card_status(present=False)
     
-    # Wiedergabemodi wie vom original TonUINO-Firmware erwartet (chip_card.hpp: pmode_t)
-    RFID_MODES = [
-        ("Hörspiel (zufällige Wiedergabe, kein Fortschritt)", 1),
-        ("Album (alle Tracks der Reihe nach)", 2),
-        ("Party (alle Tracks in zufälliger Reihenfolge)", 3),
-        ("Einzelner Track", 4),
-        ("Hörbuch (Fortschritt wird gespeichert)", 5),
-    ]
+    RFID_MODES = PLAYBACK_MODES
 
     def _program_rfid_card(self):
         """Programmiert eine RFID-Karte"""
@@ -1483,6 +1485,20 @@ class MainWindow(QMainWindow):
                     "Fehler",
                     f"Fehler beim Programmieren: {e}"
                 )
+
+    def _program_rfid_card_via_tonuino(self):
+        """Oeffnet den Dialog zum Programmieren einer Karte direkt ueber den
+        per USB angeschlossenen TonUINO (statt ueber den ACR122U-Leser)."""
+        folder_index = None
+        folder_name = ""
+        track_count = 1
+        if self.current_folder and not self._is_special_folder(self.current_folder):
+            folder_index = self.current_folder.index
+            folder_name = self._resolve_folder_name(self.current_folder)
+            track_count = max(self.current_folder.track_count, 1)
+
+        dialog = TonuinoSerialDialog(folder_index, folder_name, track_count, parent=self)
+        dialog.exec()
 
     def _set_erase_icon_state(self, enabled: bool):
         """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
