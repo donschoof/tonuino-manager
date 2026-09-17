@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QToolButton, QMenu, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoint
-from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
+from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
 
 from core import __version__
 from core.sd_card import SDCard, Folder, Track, PurgePreview
@@ -232,7 +232,8 @@ class MainWindow(QMainWindow):
     """Hauptfenster des Tonuino-Managers"""
 
     # Zwei alternative Wege, eine RFID-Karte zu programmieren - siehe
-    # _on_reader_mode_changed(): teilen sich denselben Bereich in der Sidebar.
+    # _set_reader_mode(): teilen sich denselben Bereich in der Sidebar,
+    # umgeschaltet ueber das Burger-Menue (RFID-Leser).
     READER_MODE_ACR122U = "acr122u"
     READER_MODE_TONUINO = "tonuino"
 
@@ -340,6 +341,27 @@ class MainWindow(QMainWindow):
         action_auto_check.setChecked(auto_check_enabled)
         action_auto_check.toggled.connect(self._on_auto_check_toggled)
 
+        menu.addSeparator()
+
+        reader_menu = menu.addMenu("RFID-Leser")
+        reader_group = QActionGroup(self)
+        reader_group.setExclusive(True)
+
+        action_reader_acr122u = reader_menu.addAction("ACR122U")
+        action_reader_acr122u.setCheckable(True)
+        action_reader_acr122u.setChecked(True)  # Default
+        action_reader_acr122u.triggered.connect(
+            lambda: self._set_reader_mode(self.READER_MODE_ACR122U)
+        )
+        reader_group.addAction(action_reader_acr122u)
+
+        action_reader_tonuino = reader_menu.addAction("TonUINO (seriell)")
+        action_reader_tonuino.setCheckable(True)
+        action_reader_tonuino.triggered.connect(
+            lambda: self._set_reader_mode(self.READER_MODE_TONUINO)
+        )
+        reader_group.addAction(action_reader_tonuino)
+
         menu_button = QToolButton(self)
         menu_button.setObjectName("menuButton")
         menu_button.setIcon(self._icon_from_glyph("", color="#cdd6f4", size=28))  # menu
@@ -437,16 +459,6 @@ class MainWindow(QMainWindow):
         title_row.addWidget(self.erase_card_icon)
 
         rfid_layout.addLayout(title_row)
-
-        reader_select_row = QHBoxLayout()
-        reader_select_row.setSpacing(8)
-        reader_select_row.addWidget(QLabel("Leser:"))
-        self.reader_mode_combo = QComboBox()
-        self.reader_mode_combo.addItem("ACR122U", self.READER_MODE_ACR122U)
-        self.reader_mode_combo.addItem("TonUINO (seriell)", self.READER_MODE_TONUINO)
-        self.reader_mode_combo.currentIndexChanged.connect(self._on_reader_mode_changed)
-        reader_select_row.addWidget(self.reader_mode_combo, 1)
-        rfid_layout.addLayout(reader_select_row)
 
         self.acr122u_status_widget = QWidget()
         status_row = QHBoxLayout(self.acr122u_status_widget)
@@ -1425,12 +1437,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
 
-    def _on_reader_mode_changed(self, index: int):
+    def _set_reader_mode(self, mode: str):
         """Schaltet zwischen den beiden Programmierwegen um (ACR122U-Leser vs.
-        seriell ueber den TonUINO selbst) - beide teilen sich denselben Bereich
-        in der Sidebar, siehe _setup_sidebar()."""
-        self._reader_mode = self.reader_mode_combo.itemData(index)
-        is_tonuino = self._reader_mode == self.READER_MODE_TONUINO
+        seriell ueber den TonUINO selbst) - ausgewaehlt ueber das Burger-Menue
+        (RFID-Leser), beide teilen sich denselben Bereich in der Sidebar."""
+        self._reader_mode = mode
+        is_tonuino = mode == self.READER_MODE_TONUINO
         self.acr122u_status_widget.setVisible(not is_tonuino)
         self.tonuino_status_widget.setVisible(is_tonuino)
         if is_tonuino and self.tonuino_port_combo.count() == 0:
