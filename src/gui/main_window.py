@@ -19,7 +19,8 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoi
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
 from core import __version__
-from core.sd_card import SDCard, Folder, Track
+from core.sd_card import SDCard, Folder, Track, PurgePreview
+from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, PLAYBACK_MODES
@@ -940,6 +941,84 @@ class MainWindow(QMainWindow):
             "Maximale Anzahl von 99 Ordnern erreicht!"
         )
 
+    def _confirm_purge_target_is_sd_card(self) -> bool:
+        """Warnt, bevor unwiderruflich geloescht wird, wenn das gewaehlte
+        Verzeichnis nicht zu einer typischen Tonuino-SD-Karte passt: kein
+        Wechseldatentraeger und/oder groesser als eine handelsuebliche 32GB-
+        Karte. Laesst sich das auf der Plattform nicht ermitteln, wird nicht
+        blockiert. Gibt True zurueck, wenn bereinigt werden darf."""
+        total_size = get_total_size(self.sd_card.path)
+        removable = is_removable_drive(self.sd_card.path)
+
+        too_large = total_size is not None and total_size > MAX_SD_CARD_BYTES
+        not_removable = removable is False
+
+        if not too_large and not not_removable:
+            return True
+
+        reasons = []
+        if not_removable:
+            reasons.append(
+                "Laut Betriebssystem handelt es sich nicht um einen "
+                "Wechseldatenträger (SD-Kartenleser/USB), sondern vermutlich "
+                "um ein fest eingebautes Laufwerk."
+            )
+        if too_large:
+            size_gb = total_size / (1024 ** 3)
+            reasons.append(
+                f"Das Laufwerk ist mit {size_gb:.1f} GB deutlich größer als "
+                "eine übliche 32GB-Tonuino-SD-Karte."
+            )
+
+        return confirm_action(
+            self,
+            "Ungewöhnliches Laufwerk",
+            f"Das gewählte Laufwerk ({self.sd_card.path}) sieht nicht wie eine "
+            "typische Tonuino-SD-Karte aus:\n\n- " + "\n- ".join(reasons) +
+            "\n\nWird hier fortgefahren, können unwiderruflich Daten auf dem "
+            "falschen Laufwerk gelöscht werden!\n\nTrotzdem fortfahren?"
+        )
+
+    @staticmethod
+    def _format_name_list(names: list, limit: int = 5) -> str:
+        shown = ", ".join(names[:limit])
+        if len(names) > limit:
+            shown += f", … (+{len(names) - limit} weitere)"
+        return shown
+
+    def _purge_confirmation_text(self, preview: PurgePreview) -> str:
+        """Baut die Bestaetigungsabfrage-Nachricht aus einer PurgePreview,
+        damit vor dem unwiderruflichen Loeschen konkret sichtbar ist, was
+        betroffen sein wird."""
+        lines = ["Folgendes wird unwiderruflich von der SD-Karte entfernt:", ""]
+
+        if preview.root_files:
+            lines.append(
+                f"• {len(preview.root_files)} Datei(en) im Wurzelverzeichnis: "
+                f"{self._format_name_list(preview.root_files)}"
+            )
+        if preview.root_dirs:
+            lines.append(
+                f"• {len(preview.root_dirs)} fremde(r) Ordner im Wurzelverzeichnis: "
+                f"{self._format_name_list(preview.root_dirs)}"
+            )
+        if preview.foreign_items_in_folders:
+            lines.append(
+                f"• {preview.foreign_items_in_folders} Fremddatei(en)/-ordner "
+                "innerhalb von 01-99/mp3/advert"
+            )
+        if preview.is_empty:
+            lines.append("• Keine Fremddateien oder -ordner gefunden.")
+
+        lines.append("")
+        lines.append(
+            "Außerdem werden leere Ordner gelöscht und alle Ordner- und "
+            "Track-Nummern lückenlos neu vergeben."
+        )
+        lines.append("")
+        lines.append("Fortfahren?")
+        return "\n".join(lines)
+
     def _purge_sd_card(self):
         """Bereinigt die SD-Karte: entfernt alles, was nicht zur Tonuio-Struktur
         gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien auch
@@ -948,14 +1027,14 @@ class MainWindow(QMainWindow):
         if not self.sd_card:
             return
 
+        if not self._confirm_purge_target_is_sd_card():
+            return
+
+        preview = self.sd_card.preview_purge()
         confirmed = confirm_action(
             self,
             "SD-Karte bereinigen",
-            "Dies entfernt unwiderruflich alle Dateien und Ordner, die nicht zur "
-            "Tonuino-Struktur gehören (auch Fremddateien innerhalb von 'mp3'/"
-            "'advert'). Leere Ordner werden gelöscht und alle Ordner- und "
-            "Track-Nummern werden lückenlos neu vergeben.\n\n"
-            "Fortfahren?"
+            self._purge_confirmation_text(preview)
         )
         if not confirmed:
             return
