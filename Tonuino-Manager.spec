@@ -143,7 +143,11 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        # UPX-Packung deaktiviert: sie ist der Hauptgrund fuer falsch-positive
+        # Antivirus-Erkennungen bzw. Echtzeitschutz-Scanlocks auf frisch
+        # entpackte onefile-DLLs (siehe python311.dll-Ladefehler direkt nach
+        # dem Setup-Update auf 1.2.5).
+        upx=False,
         upx_exclude=[],
         runtime_tmpdir=None,
         console=False,
