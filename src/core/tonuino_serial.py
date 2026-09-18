@@ -6,25 +6,33 @@ Voraussetzung: Die TonUINO-Firmware wurde mit aktiviertem
 "#define SerialInputAsCommand" gebaut (siehe TonUINO-TNG/src/constants.hpp,
 standardmaessig auskommentiert).
 
-Protokoll (siehe TonUINO-TNG/src/serial_input.cpp, commands.cpp,
-state_machine.cpp): Die Firmware liest ueber die USB-Serielle Verbindung
-Ganzzahlen (Serial.parseInt()):
-  - negative Werte simulieren einen Tastendruck (commandRaw), z.B. entspricht
-    -4 "allLong" (alle Tasten lange gedrueckt), was aus Idle/Play/Pause das
-    Admin-Menue oeffnet.
-  - positive Werte sind ein "menu_jump": die Firmware springt in der gerade
-    aktiven Menue-Ebene direkt auf die angegebene Zahl und bestaetigt sie
-    sofort (menu_jump zaehlt intern auch als "select"-Kommando).
+Protokoll (siehe TonUINO-TNG/src/serial_input.cpp, state_machine.cpp):
+  WRITECARD <mode>[,<folder>[,<special>[,<special2>]]]
+schreibt eine auf dem TonUINO-eigenen Leser aufliegende Karte direkt, ohne
+Menuefuehrung. Welche der optionalen Parameter mitgesendet werden muessen,
+haengt vom Modus ab (siehe WRITECARD_MODES/_GROUP_PARAMS unten) - die
+Firmware ruft pro erwartetem Parameter erneut Serial.parseInt() auf; fehlt
+ein Parameter am Zeilenende, blockiert das bis zum ~1s-Serial-Timeout des
+Arduino, bevor 0 zurueckgegeben wird. Deshalb werden hier immer alle von der
+Modus-Gruppe geforderten Parameter explizit mitgesendet.
 
-Damit laesst sich der Menuepfad "Admin-Menue -> Neue Karte anlegen -> Modus
--> Ordner -> [Track]" fernsteuern, waehrend eine Karte auf dem TonUINO-eigenen
-RFID-Leser liegt - die Karte wird danach genauso geschrieben, wie es die
-Firmware auch bei Bedienung per Tasten taete.
+Die Firmware startet den Schreibvorgang nur, wenn zum Zeitpunkt des Befehls
+KEINE Karte auf dem Leser liegt (chip_card.isCardRemoved()) - liegt schon
+eine auf, wird der Befehl kommentarlos ignoriert. Bei ungueltigen Parametern
+antwortet die Firmware sofort mit einer Zeile "WRITECARD: <Fehlertext>". Bei
+gueltigen Parametern wartet sie (ohne eigenes Timeout) darauf, dass eine
+Karte aufgelegt wird, schreibt sie und meldet den Abschluss dann zusaetzlich
+ueber zwei weitere Zeilen: "WRITECARD: OK" + "WRITECARD: Karte erfolgreich
+beschrieben" bei Erfolg, bzw. "WRITECARD: ERROR" + "WRITECARD: Schreiben
+fehlgeschlagen" bei Fehler/Abbruch. Ein laufender Schreibvorgang kann per
+"WRITECARD CANCEL" abgebrochen werden, was ueber denselben ERROR-Abschluss
+gemeldet wird; laeuft kein Schreibvorgang, antwortet die Firmware sofort mit
+"WRITECARD: kein Schreibvorgang aktiv, nichts abzubrechen".
 """
 
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class TonuinoSerialError(Exception):
@@ -38,28 +46,63 @@ class SerialPortInfo:
     description: str
 
 
+# Parameter-Gruppen einer WRITECARD-Modus-Zeile (siehe Modultext oben)
+GROUP_MODE_ONLY = "mode"
+GROUP_MODE_FOLDER = "mode_folder"
+GROUP_MODE_FOLDER_SPECIAL = "mode_folder_special"
+GROUP_MODE_FOLDER_SPECIAL_SPECIAL2 = "mode_folder_special_special2"
+
+
+@dataclass(frozen=True)
+class WriteCardMode:
+    value: int
+    label: str
+    group: str
+
+
 class TonuinoSerial:
     """Steuert einen per USB angeschlossenen TonUINO (SerialInputAsCommand) fern"""
 
     BAUDRATE = 115200
 
-    # commandRaw-Werte aus TonUINO-TNG/src/serial_input.cpp (SerialInputAsCommand)
-    CMD_UPDOWN_LONG = -1
-    CMD_DOWN        = -2
-    CMD_DOWN_LONG   = -3
-    CMD_ALL_LONG    = -4   # -> commandRaw::allLong -> command::admin (Admin-Menue oeffnen)
-    CMD_PAUSE       = -5
-    CMD_PAUSE_LONG  = -6   # -> command::adm_end (Admin-Menue/Eingabe abbrechen)
-    CMD_UP          = -8
-    CMD_UP_LONG     = -9
+    # pmode_t-Werte aus TonUINO-TNG/src/chip_card.hpp
+    PMODE_HOERSPIEL = 1
+    PMODE_ALBUM = 2
+    PMODE_PARTY = 3
+    PMODE_EINZEL = 4
+    PMODE_HOERBUCH = 5
+    PMODE_ADMIN = 6
+    PMODE_HOERSPIEL_VB = 7
+    PMODE_ALBUM_VB = 8
+    PMODE_PARTY_VB = 9
+    PMODE_HOERBUCH_1 = 10
+    PMODE_REPEAT_LAST = 11
+    PMODE_QUIZ_GAME = 12
+    PMODE_MEMORY_GAME = 13
+    PMODE_SWITCH_BT = 14
+    PMODE_TEAPOT_GAME = 15
+    PMODE_HOERBUCH_VB = 16
 
-    # Wiedergabemodi wie in chip_card.hpp: pmode_t (identisch zu RFIDReader-Werten)
-    MODE_HOERSPIEL = 1
-    MODE_ALBUM     = 2
-    MODE_PARTY     = 3
-    MODE_EINZEL    = 4
-    MODE_HOERBUCH  = 5
-    MODE_ADMIN     = 6
+    # Single Source of Truth fuer alle 16 WRITECARD-Modi (Label + benoetigte
+    # Parameter), siehe TonUINO-TNG/src/constants.hpp fuer die Modustabelle.
+    WRITECARD_MODES: Dict[int, WriteCardMode] = {
+        PMODE_HOERSPIEL: WriteCardMode(PMODE_HOERSPIEL, "Hörspiel", GROUP_MODE_FOLDER),
+        PMODE_ALBUM: WriteCardMode(PMODE_ALBUM, "Album", GROUP_MODE_FOLDER),
+        PMODE_PARTY: WriteCardMode(PMODE_PARTY, "Party", GROUP_MODE_FOLDER),
+        PMODE_EINZEL: WriteCardMode(PMODE_EINZEL, "Einzel", GROUP_MODE_FOLDER_SPECIAL),
+        PMODE_HOERBUCH: WriteCardMode(PMODE_HOERBUCH, "Hörbuch", GROUP_MODE_FOLDER),
+        PMODE_ADMIN: WriteCardMode(PMODE_ADMIN, "Admin", GROUP_MODE_FOLDER),
+        PMODE_HOERSPIEL_VB: WriteCardMode(PMODE_HOERSPIEL_VB, "Hörspiel von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
+        PMODE_ALBUM_VB: WriteCardMode(PMODE_ALBUM_VB, "Album von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
+        PMODE_PARTY_VB: WriteCardMode(PMODE_PARTY_VB, "Party von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
+        PMODE_HOERBUCH_1: WriteCardMode(PMODE_HOERBUCH_1, "Hörbuch einzel", GROUP_MODE_FOLDER_SPECIAL),
+        PMODE_REPEAT_LAST: WriteCardMode(PMODE_REPEAT_LAST, "Wiederhole", GROUP_MODE_ONLY),
+        PMODE_QUIZ_GAME: WriteCardMode(PMODE_QUIZ_GAME, "Quiz Spiel", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
+        PMODE_MEMORY_GAME: WriteCardMode(PMODE_MEMORY_GAME, "Memory Spiel", GROUP_MODE_FOLDER),
+        PMODE_SWITCH_BT: WriteCardMode(PMODE_SWITCH_BT, "Bluetooth an/aus", GROUP_MODE_ONLY),
+        PMODE_TEAPOT_GAME: WriteCardMode(PMODE_TEAPOT_GAME, "Teekesselchen Spiel", GROUP_MODE_FOLDER),
+        PMODE_HOERBUCH_VB: WriteCardMode(PMODE_HOERBUCH_VB, "Hörbuch von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
+    }
 
     def __init__(self):
         self._serial = None
@@ -122,80 +165,130 @@ class TonuinoSerial:
                 pass
             self._serial = None
 
-    def send_raw(self, value: int, delay: float = 0.3):
-        """Sendet einen einzelnen commandRaw-/menu_jump-Wert an die Firmware"""
+    def _read_line(self, deadline: float) -> Optional[str]:
+        """Liest Zeilen, bis eine nicht-leere Zeile ankommt oder 'deadline'
+        (time.monotonic()) erreicht ist. Der Port-Timeout wird waehrenddessen
+        klein gehalten, damit die Deadline zeitnah geprueft werden kann."""
+        original_timeout = self._serial.timeout
+        self._serial.timeout = 0.3
+        try:
+            while time.monotonic() < deadline:
+                raw = self._serial.readline()
+                if raw:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if line:
+                        return line
+            return None
+        finally:
+            self._serial.timeout = original_timeout
+
+    def write_card(
+        self,
+        mode: int,
+        folder: Optional[int] = None,
+        special: Optional[int] = None,
+        special2: Optional[int] = None,
+        timeout: float = 300.0,
+    ) -> str:
+        """
+        Schreibt eine auf dem TonUINO-eigenen Leser aufliegende (bzw. noch
+        aufzulegende) Karte per WRITECARD-Befehl.
+
+        mode: einer der PMODE_*-Werte
+        folder/special/special2: je nach Modus-Gruppe erforderlich (siehe
+            WRITECARD_MODES) - fuer Modi ohne Ordnerbezug ('mode_folder'-
+            Gruppe) darf folder=None gelassen werden und wird auf 0
+            defaultet (z.B. Admin-Karte). special/special2 werden dagegen
+            NIE stillschweigend defaultet, da sie inhaltlich relevant sind
+            (z.B. der Track bei 'Einzel').
+        timeout: maximale Wartezeit in Sekunden auf die abschliessende
+            OK/ERROR-Rueckmeldung (die Firmware selbst hat dabei kein
+            eigenes Timeout - sie wartet unbegrenzt, bis eine Karte aufgelegt
+            wird; siehe cancel_write() fuer einen aktiven Abbruch).
+
+        Gibt die Erfolgsmeldung der Firmware zurueck, oder wirft
+        TonuinoSerialError bei Validierungs-/Schreibfehler bzw. Timeout.
+        """
         if not self.is_connected:
             raise TonuinoSerialError("Nicht mit dem TonUINO verbunden")
 
+        info = self.WRITECARD_MODES.get(mode)
+        if info is None:
+            raise ValueError(f"Unbekannter WRITECARD-Modus: {mode}")
+
+        needs_folder = info.group != GROUP_MODE_ONLY
+        needs_special = info.group in (
+            GROUP_MODE_FOLDER_SPECIAL,
+            GROUP_MODE_FOLDER_SPECIAL_SPECIAL2,
+        )
+        needs_special2 = info.group == GROUP_MODE_FOLDER_SPECIAL_SPECIAL2
+
+        if needs_folder:
+            if folder is None:
+                folder = 0
+            elif mode != self.PMODE_ADMIN and not (1 <= folder <= 99):
+                raise ValueError("folder muss zwischen 1 und 99 liegen")
+
+        if needs_special and special is None:
+            raise ValueError(f"Modus '{info.label}' benoetigt 'special'")
+        if needs_special2 and special2 is None:
+            raise ValueError(f"Modus '{info.label}' benoetigt 'special2'")
+
+        if mode == self.PMODE_EINZEL and special < 1:
+            raise ValueError("Fuer 'Einzel' muss 'special' (Track) mindestens 1 sein")
+        elif mode == self.PMODE_HOERBUCH_1 and not (special < 30):
+            raise ValueError("Fuer 'Hörbuch einzel' muss 'special' kleiner als 30 sein")
+        elif mode in (self.PMODE_HOERSPIEL_VB, self.PMODE_ALBUM_VB,
+                      self.PMODE_PARTY_VB, self.PMODE_HOERBUCH_VB):
+            if not (1 <= special <= special2):
+                raise ValueError("Fuer 'von-bis'-Modi muss 1 <= special <= special2 gelten")
+        elif mode == self.PMODE_QUIZ_GAME:
+            if special not in (0, 2, 4) or special2 not in (0, 1):
+                raise ValueError("Fuer 'Quiz Spiel' muss special in {0,2,4} und special2 in {0,1} liegen")
+
+        parts = [str(mode)]
+        if needs_folder:
+            parts.append(str(folder))
+        if needs_special:
+            parts.append(str(special))
+        if needs_special2:
+            parts.append(str(special2))
+        command = "WRITECARD " + ",".join(parts) + "\n"
+
         try:
-            self._serial.write(f"{value}\n".encode("ascii"))
+            self._serial.write(command.encode("ascii"))
             self._serial.flush()
         except Exception as e:
             raise TonuinoSerialError(f"Senden an TonUINO fehlgeschlagen: {e}") from e
 
-        if delay:
-            time.sleep(delay)
+        deadline = time.monotonic() + timeout
+        while True:
+            line = self._read_line(deadline)
+            if line is None:
+                raise TonuinoSerialError(
+                    "Zeitüberschreitung: keine Rückmeldung vom TonUINO. "
+                    "Liegt eventuell schon eine Karte auf dem Leser?"
+                )
+            if line == "WRITECARD: OK":
+                detail = self._read_line(min(deadline, time.monotonic() + 2.0))
+                return detail or "Karte erfolgreich beschrieben"
+            if line == "WRITECARD: ERROR":
+                detail = self._read_line(min(deadline, time.monotonic() + 2.0))
+                raise TonuinoSerialError(detail or "Schreiben fehlgeschlagen")
+            if line.startswith("WRITECARD: "):
+                raise TonuinoSerialError(line[len("WRITECARD: "):])
+            # Sonstige Boot-/Debug-Ausgaben der Firmware ignorieren und weiterlesen.
 
-    def enter_admin_menu(self, delay: float = 1.0):
-        """Simuliert 'alle Tasten lange gedrueckt' und oeffnet damit das Admin-Menue"""
-        self.send_raw(self.CMD_ALL_LONG, delay=delay)
+    def cancel_write(self):
+        """Bricht einen per write_card() laufenden Schreibvorgang ab. Die
+        Rueckmeldung (ERROR-Abschluss bzw. 'kein Schreibvorgang aktiv') wird
+        von der Leseschleife des laufenden write_card()-Aufrufs verarbeitet -
+        diese Methode liest selbst keine Antwort."""
+        if not self.is_connected:
+            raise TonuinoSerialError("Nicht mit dem TonUINO verbunden")
 
-    def abort(self, delay: float = 0.5):
-        """Bricht das aktuelle Admin-Menue/die aktuelle Eingabe ab"""
-        self.send_raw(self.CMD_PAUSE_LONG, delay=delay)
-
-    def menu_jump(self, value: int, delay: float = 0.6):
-        """Springt in der aktiven Menue-Ebene direkt zu 'value' und bestaetigt sie
-        (siehe VoiceMenu::react()/commandRaw::menu_jump in state_machine.cpp)"""
-        if value < 1:
-            raise ValueError("value muss >= 1 sein")
-        self.send_raw(value, delay=delay)
-
-    def write_folder_card(
-        self,
-        folder: int,
-        mode: int,
-        special: int = 0,
-        last_folder: Optional[int] = None,
-    ):
-        """
-        Programmiert die aktuell auf dem TonUINO-Leser liegende Karte fuer einen
-        Ordner, indem das Admin-Menue 'Neue Karte anlegen' ferngesteuert
-        durchlaufen wird (state_machine.cpp: Admin_Entry -> Admin_NewCard ->
-        ChMode -> ChFolder -> [ChTrack | ChLastFolder]).
-
-        folder: Ordnernummer 1-99
-        mode:   Wiedergabemodus (siehe MODE_*-Konstanten, identisch zu
-                RFIDReader.write_tonuino_card())
-        special: bei mode=MODE_EINZEL der abzuspielende Track
-        last_folder: bei mode=MODE_HOERBUCH der letzte Ordner einer
-                     fortlaufenden Kette (Standard: nur dieser eine Ordner)
-
-        Die Firmware schreibt die Karte automatisch, sobald die Menuefuehrung
-        abgeschlossen ist und die Karte noch aufliegt, und wartet danach, bis
-        die Karte wieder entfernt wird.
-        """
-        if not (1 <= folder <= 99):
-            raise ValueError("folder muss zwischen 1 und 99 liegen")
-        if mode not in (self.MODE_HOERSPIEL, self.MODE_ALBUM, self.MODE_PARTY,
-                         self.MODE_EINZEL, self.MODE_HOERBUCH):
-            raise ValueError(f"Nicht unterstuetzter Modus: {mode}")
-
-        self.enter_admin_menu()
-        self.menu_jump(1)          # Admin_Entry: Option 1 = "Neue Karte anlegen"
-        self.menu_jump(mode)       # ChMode
-        self.menu_jump(folder)     # ChFolder
-
-        if mode == self.MODE_EINZEL:
-            if special < 1:
-                raise ValueError("Fuer Einzeltrack-Modus wird 'special' (Track) benoetigt")
-            self.menu_jump(special)                        # ChTrack
-        elif mode == self.MODE_HOERBUCH:
-            self.menu_jump(last_folder if last_folder is not None else folder)  # ChLastFolder
-
-    def write_admin_card(self):
-        """Programmiert die aufliegende Karte als Admin-Karte (keinem Ordner
-        zugeordnet, oeffnet spaeter am TonUINO das Admin-Menue)"""
-        self.enter_admin_menu()
-        self.menu_jump(1)               # Admin_Entry: "Neue Karte anlegen"
-        self.menu_jump(self.MODE_ADMIN)  # ChMode: Modus "admin" -> schreibt sofort
+        try:
+            self._serial.write(b"WRITECARD CANCEL\n")
+            self._serial.flush()
+        except Exception as e:
+            raise TonuinoSerialError(f"Senden an TonUINO fehlgeschlagen: {e}") from e
