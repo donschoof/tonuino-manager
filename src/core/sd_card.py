@@ -319,11 +319,13 @@ class SDCard:
         allowed_dir = lambda name: bool(self.FOLDER_PATTERN.match(name)) or name in self.SPECIAL_FOLDER_NAMES
 
         # 1. Root-Ebene: lose Dateien loeschen, nicht erlaubte Verzeichnisse rekursiv loeschen
+        # (missing_ok/ignore_errors, da macOS auf der SD-Karte Metadatendateien wie
+        # .DS_Store/._.DS_Store nebenbei selbst anlegt/loescht - Race Condition)
         for item in list(self.path.iterdir()):
             if item.is_file():
-                item.unlink()
+                item.unlink(missing_ok=True)
             elif item.is_dir() and not allowed_dir(item.name):
-                shutil.rmtree(item)
+                shutil.rmtree(item, ignore_errors=True)
 
         # 2. Innerhalb erlaubter Verzeichnisse: alles ausser mp3-Dateien entfernen
         for item in self.path.iterdir():
@@ -332,9 +334,9 @@ class SDCard:
 
             for child in item.iterdir():
                 if child.is_dir():
-                    shutil.rmtree(child)
+                    shutil.rmtree(child, ignore_errors=True)
                 elif child.suffix.lower() != ".mp3":
-                    child.unlink()
+                    child.unlink(missing_ok=True)
 
         # 3. In-Memory-Zustand neu aufbauen
         self.scan()
