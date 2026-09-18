@@ -10,6 +10,7 @@ import os
 import platform
 import re
 import shutil
+import time
 from pathlib import Path
 
 
@@ -280,16 +281,29 @@ def create_macos_package():
         archive_path.unlink()
 
     print(f"Erstelle DMG-Abbild (Version {version})...")
-    result = subprocess.run(
-        [
-            "hdiutil", "create",
-            "-volname", "Tonuino-Manager",
-            "-srcfolder", str(dmg_root),
-            "-ov", "-format", "UDZO",
-            str(archive_path),
-        ],
-        capture_output=False,
-    )
+    # hdiutil create schlaegt auf den macOS-CI-Runnern gelegentlich mit
+    # "Resource busy" fehl, weil Spotlight (mds/mdworker) den gerade erst
+    # per copytree/codesign geschriebenen dmg_root-Ordner kurzzeitig sperrt.
+    # Kein echter Fehler im Build - ein paar Sekunden warten und erneut
+    # versuchen behebt es zuverlaessig.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        result = subprocess.run(
+            [
+                "hdiutil", "create",
+                "-volname", "Tonuino-Manager",
+                "-srcfolder", str(dmg_root),
+                "-ov", "-format", "UDZO",
+                str(archive_path),
+            ],
+            capture_output=False,
+        )
+        if result.returncode == 0:
+            break
+        if attempt < max_attempts:
+            print(f"hdiutil create fehlgeschlagen (Versuch {attempt}/{max_attempts}), erneuter Versuch in 5s...")
+            time.sleep(5)
+
     shutil.rmtree(dmg_root)
 
     if result.returncode != 0:
