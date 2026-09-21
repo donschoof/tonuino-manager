@@ -1614,7 +1614,7 @@ class MainWindow(QMainWindow):
     TONUINO_MODES = [
         (info.label, info.value)
         for info in TonuinoSerial.WRITECARD_MODES.values()
-        if info.value != TonuinoSerial.PMODE_ADMIN
+        if info.value != TonuinoSerial.PMODE_ADMIN_CARD
     ]
 
     def _program_rfid_card(self):
@@ -1870,7 +1870,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        self._start_tonuino_write(TonuinoSerial.PMODE_ADMIN, None, None, None)
+        self._start_tonuino_write(TonuinoSerial.PMODE_ADMIN_CARD, None, None, None)
 
     def _start_tonuino_write(self, mode: int, folder: Optional[int],
                               special: Optional[int], special2: Optional[int]):

@@ -65,13 +65,28 @@ class TonuinoSerial:
 
     BAUDRATE = 115200
 
+    # Als Klassenattribute verfuegbar machen, damit Aufrufer (main_window.py)
+    # sie ueber TonuinoSerial.GROUP_MODE_* referenzieren koennen.
+    GROUP_MODE_ONLY = GROUP_MODE_ONLY
+    GROUP_MODE_FOLDER = GROUP_MODE_FOLDER
+    GROUP_MODE_FOLDER_SPECIAL = GROUP_MODE_FOLDER_SPECIAL
+    GROUP_MODE_FOLDER_SPECIAL_SPECIAL2 = GROUP_MODE_FOLDER_SPECIAL_SPECIAL2
+
     # pmode_t-Werte aus TonUINO-TNG/src/chip_card.hpp
     PMODE_HOERSPIEL = 1
     PMODE_ALBUM = 2
     PMODE_PARTY = 3
     PMODE_EINZEL = 4
     PMODE_HOERBUCH = 5
+    # "Admin" (6) ist nur ein Menue-Auswahlwert: waehlt man ihn im normalen
+    # Menuepfad "Neue Karte anlegen" -> Modus, ersetzt die Firmware ihn dort
+    # sofort durch PMODE_ADMIN_CARD und setzt folder=0 (state_machine.cpp,
+    # ChMode::react()). Der WRITECARD-Serial-Befehl durchlaeuft dieses Menue
+    # nicht und macht diese Ersetzung NICHT - fuer echte Admin-Karten muss
+    # daher direkt PMODE_ADMIN_CARD gesendet werden, sonst landet der rohe
+    # Wert 6 auf der Karte und sie wird nicht als Admin-Karte erkannt.
     PMODE_ADMIN = 6
+    PMODE_ADMIN_CARD = 0xFF  # pmode_t::admin_card aus chip_card.hpp
     PMODE_HOERSPIEL_VB = 7
     PMODE_ALBUM_VB = 8
     PMODE_PARTY_VB = 9
@@ -91,7 +106,7 @@ class TonuinoSerial:
         PMODE_PARTY: WriteCardMode(PMODE_PARTY, "Party", GROUP_MODE_FOLDER),
         PMODE_EINZEL: WriteCardMode(PMODE_EINZEL, "Einzel", GROUP_MODE_FOLDER_SPECIAL),
         PMODE_HOERBUCH: WriteCardMode(PMODE_HOERBUCH, "Hörbuch", GROUP_MODE_FOLDER),
-        PMODE_ADMIN: WriteCardMode(PMODE_ADMIN, "Admin", GROUP_MODE_FOLDER),
+        PMODE_ADMIN_CARD: WriteCardMode(PMODE_ADMIN_CARD, "Admin", GROUP_MODE_FOLDER),
         PMODE_HOERSPIEL_VB: WriteCardMode(PMODE_HOERSPIEL_VB, "Hörspiel von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
         PMODE_ALBUM_VB: WriteCardMode(PMODE_ALBUM_VB, "Album von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
         PMODE_PARTY_VB: WriteCardMode(PMODE_PARTY_VB, "Party von-bis", GROUP_MODE_FOLDER_SPECIAL_SPECIAL2),
@@ -226,7 +241,7 @@ class TonuinoSerial:
         if needs_folder:
             if folder is None:
                 folder = 0
-            elif mode != self.PMODE_ADMIN and not (1 <= folder <= 99):
+            elif mode != self.PMODE_ADMIN_CARD and not (1 <= folder <= 99):
                 raise ValueError("folder muss zwischen 1 und 99 liegen")
 
         if needs_special and special is None:
