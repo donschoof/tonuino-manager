@@ -24,7 +24,6 @@ from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYT
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, PLAYBACK_MODES
-from core.tonuino_config import TonuinoConfigManager
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
@@ -254,7 +253,6 @@ class MainWindow(QMainWindow):
         self.tonuino_serial = TonuinoSerial()
         self._reader_mode = self.READER_MODE_ACR122U
         self._tonuino_worker: TonuinoCardWorker = None
-        self.config_manager: TonuinoConfigManager = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
         self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
@@ -743,7 +741,6 @@ class MainWindow(QMainWindow):
             return
         
         self.sd_card = SDCard(path)
-        self.config_manager = TonuinoConfigManager(path)
         self._folder_name_cache.clear()
 
         self.progress_bar.setVisible(True)
@@ -767,9 +764,6 @@ class MainWindow(QMainWindow):
             self.btn_new_folder.setEnabled(True)
             self.btn_purge_card.setEnabled(True)
             self._populate_folder_list()
-            
-            if self.config_manager:
-                self.config_manager.load()
         else:
             self.status_bar.showMessage("Fehler beim Scannen der SD-Karte")
             QMessageBox.warning(
@@ -798,7 +792,6 @@ class MainWindow(QMainWindow):
         vorhandenen Pfade zugreifen und dabei Dateisystem-Fehler ins Log
         schreiben."""
         self.sd_card = None
-        self.config_manager = None
         self.current_folder = None
         self._folder_name_cache.clear()
 
@@ -955,11 +948,6 @@ class MainWindow(QMainWindow):
                 f"Anzahl Tracks: {folder.track_count}\n"
                 f"Pfad: {folder.path}"
             )
-
-            if self.config_manager:
-                mode = self.config_manager.get_folder_mode(folder.index)
-                if mode:
-                    info_text += f"\nWiedergabemodus: {mode}"
 
         self.folder_info.setText(info_text)
 
@@ -1137,10 +1125,6 @@ class MainWindow(QMainWindow):
             self.btn_purge_card.setEnabled(True)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Bereinigen: {error_message}")
             return
-
-        if self.config_manager:
-            self.config_manager.config.folder_settings.clear()
-            self.config_manager.save()
 
         self.current_folder = None
         self._folder_name_cache.clear()

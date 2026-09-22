@@ -130,8 +130,7 @@ SD-Karte/
 │   └── ...
 ├── 02/              → Ordner 02
 ├── ...
-├── admin/           → Admin-Ordner (wird ignoriert)
-└── tonuio.cfg       → Konfigurationsdatei (optional)
+└── admin/           → Admin-Ordner (wird ignoriert)
 ```
 
 ## Ordnernamen & Cover

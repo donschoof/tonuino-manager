@@ -71,7 +71,6 @@ class SDCard:
         self.path = Path(path)
         self.folders: Dict[int, Folder] = {}
         self.special_folders: Dict[str, Folder] = {}
-        self.config_path = self.path / "tonuio.cfg"
         self.is_valid_tonuino = False
 
     def scan(self) -> bool:
@@ -311,46 +310,63 @@ class SDCard:
 
         return preview
 
-    def purge(self):
-        """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
-        gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien
-        auch innerhalb dieser Ordner auf und nummeriert Ordner sowie Tracks
-        anschliessend luecken- und kollisionsfrei durch."""
+    def _remove_foreign_items(self):
+        """Entfernt alles, was nicht zur Tonuio-Struktur gehoert (Whitelist:
+        Ordner 01-99, mp3, advert), inklusive Fremddateien innerhalb dieser
+        Ordner. Wird sowohl vor als auch nach dem Umbenennen/Umnummerieren
+        aufgerufen, da macOS auf Schreibvorgaenge (Renames) reagiert und dabei
+        selbst neue Metadatendateien anlegt (z.B. .Spotlight-V100 oder
+        AppleDouble-Schattendateien wie ._001.mp3 fuer jede umbenannte Datei).
+        missing_ok/ignore_errors, da macOS solche Dateien auch nebenbei selbst
+        loescht/erneuert - Race Condition."""
         allowed_dir = lambda name: bool(self.FOLDER_PATTERN.match(name)) or name in self.SPECIAL_FOLDER_NAMES
 
-        # 1. Root-Ebene: lose Dateien loeschen, nicht erlaubte Verzeichnisse rekursiv loeschen
+        # Root-Ebene: lose Dateien loeschen, nicht erlaubte Verzeichnisse rekursiv loeschen
         for item in list(self.path.iterdir()):
             if item.is_file():
-                item.unlink()
+                item.unlink(missing_ok=True)
             elif item.is_dir() and not allowed_dir(item.name):
-                shutil.rmtree(item)
+                shutil.rmtree(item, ignore_errors=True)
 
-        # 2. Innerhalb erlaubter Verzeichnisse: alles ausser mp3-Dateien entfernen
+        # Innerhalb erlaubter Verzeichnisse: alles ausser mp3-Dateien entfernen
         for item in self.path.iterdir():
             if not item.is_dir() or not allowed_dir(item.name):
                 continue
 
             for child in item.iterdir():
                 if child.is_dir():
-                    shutil.rmtree(child)
+                    shutil.rmtree(child, ignore_errors=True)
                 elif child.suffix.lower() != ".mp3":
-                    child.unlink()
+                    child.unlink(missing_ok=True)
 
-        # 3. In-Memory-Zustand neu aufbauen
+    def purge(self):
+        """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
+        gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien
+        auch innerhalb dieser Ordner auf und nummeriert Ordner sowie Tracks
+        anschliessend luecken- und kollisionsfrei durch."""
+        # 1. Fremddateien/-ordner entfernen
+        self._remove_foreign_items()
+
+        # 2. In-Memory-Zustand neu aufbauen
         self.scan()
 
-        # 4. Numerierte Ordner, die jetzt leer sind, entfernen
+        # 3. Numerierte Ordner, die jetzt leer sind, entfernen
         for idx in list(self.folders.keys()):
             if self.folders[idx].track_count == 0:
                 self.delete_folder(idx)
 
-        # 5. Verbleibende mp3s je numeriertem Ordner luecken- und kollisionsfrei
+        # 4. Verbleibende mp3s je numeriertem Ordner luecken- und kollisionsfrei
         #    durchnummerieren (Systemordner mp3/advert werden nicht sortiert)
         for folder in self.folders.values():
             self.reorder_tracks(folder, sorted(folder.tracks, key=lambda t: t.index))
 
-        # 6. Luecken in der 01-99-Ordnernummerierung schliessen
+        # 5. Luecken in der 01-99-Ordnernummerierung schliessen
         self.renumber_folders()
+
+        # 6. Fremddateien erneut entfernen: das Umbenennen in Schritt 4/5 kann
+        #    macOS dazu bringen, fuer die umbenannten Dateien/Ordner neue
+        #    Metadatendateien anzulegen (siehe _remove_foreign_items)
+        self._remove_foreign_items()
 
     @property
     def folder_count(self) -> int:
