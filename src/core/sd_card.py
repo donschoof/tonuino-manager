@@ -6,6 +6,7 @@ Erkennt und verwaltet Tonuio-konforme SD-Karten
 import os
 import re
 import shutil
+import stat
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
@@ -305,10 +306,46 @@ class SDCard:
                 continue
 
             for child in item.iterdir():
-                if child.is_dir() or child.suffix.lower() != ".mp3":
+                if child.is_dir() or self._is_appledouble(child.name) or child.suffix.lower() != ".mp3":
                     preview.foreign_items_in_folders += 1
 
         return preview
+
+    @staticmethod
+    def _is_appledouble(name: str) -> bool:
+        """True fuer macOS-AppleDouble-Schattendateien (._001.mp3 usw.) - die
+        sind trotz .mp3-Endung reiner Metadaten-Muell, nie echter Tonuio-Track."""
+        return name.startswith("._")
+
+    @staticmethod
+    def _clear_readonly_and_retry(func, path, exc_info):
+        """onerror-Handler fuer shutil.rmtree(): macOS setzt beim Beschreiben
+        von FAT/exFAT-Karten (z.B. .Spotlight-V100, AppleDouble-Dateien) unter
+        Windows oft das Nur-Lesen-Attribut. Ohne das zu entfernen schlaegt das
+        Loeschen dort mit PermissionError fehl - mit ignore_errors=True bisher
+        lautlos, die Datei/der Ordner blieb unbemerkt liegen."""
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError:
+            pass
+
+    @classmethod
+    def _force_unlink(cls, path: Path):
+        """Wie Path.unlink(missing_ok=True), aber entfernt bei Bedarf zuerst
+        das Nur-Lesen-Attribut (siehe _clear_readonly_and_retry)."""
+        try:
+            path.unlink(missing_ok=True)
+        except PermissionError:
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @classmethod
+    def _force_rmtree(cls, path: Path):
+        shutil.rmtree(path, onerror=cls._clear_readonly_and_retry)
 
     def _remove_foreign_items(self):
         """Entfernt alles, was nicht zur Tonuio-Struktur gehoert (Whitelist:
@@ -316,28 +353,28 @@ class SDCard:
         Ordner. Wird sowohl vor als auch nach dem Umbenennen/Umnummerieren
         aufgerufen, da macOS auf Schreibvorgaenge (Renames) reagiert und dabei
         selbst neue Metadatendateien anlegt (z.B. .Spotlight-V100 oder
-        AppleDouble-Schattendateien wie ._001.mp3 fuer jede umbenannte Datei).
-        missing_ok/ignore_errors, da macOS solche Dateien auch nebenbei selbst
-        loescht/erneuert - Race Condition."""
+        AppleDouble-Schattendateien wie ._001.mp3 fuer jede umbenannte Datei)."""
         allowed_dir = lambda name: bool(self.FOLDER_PATTERN.match(name)) or name in self.SPECIAL_FOLDER_NAMES
 
         # Root-Ebene: lose Dateien loeschen, nicht erlaubte Verzeichnisse rekursiv loeschen
         for item in list(self.path.iterdir()):
             if item.is_file():
-                item.unlink(missing_ok=True)
+                self._force_unlink(item)
             elif item.is_dir() and not allowed_dir(item.name):
-                shutil.rmtree(item, ignore_errors=True)
+                self._force_rmtree(item)
 
-        # Innerhalb erlaubter Verzeichnisse: alles ausser mp3-Dateien entfernen
+        # Innerhalb erlaubter Verzeichnisse: alles ausser echten mp3-Dateien
+        # entfernen - AppleDouble-Schattendateien (._*.mp3) zaehlen trotz
+        # .mp3-Endung nicht als Track und werden immer entfernt.
         for item in self.path.iterdir():
             if not item.is_dir() or not allowed_dir(item.name):
                 continue
 
             for child in item.iterdir():
                 if child.is_dir():
-                    shutil.rmtree(child, ignore_errors=True)
-                elif child.suffix.lower() != ".mp3":
-                    child.unlink(missing_ok=True)
+                    self._force_rmtree(child)
+                elif self._is_appledouble(child.name) or child.suffix.lower() != ".mp3":
+                    self._force_unlink(child)
 
     def purge(self):
         """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
