@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QProgressBar, QSplitter, QInputDialog,
+    QStatusBar, QSplitter, QInputDialog,
     QAbstractItemView, QProgressDialog, QApplication,
     QToolButton, QMenu
 )
@@ -618,12 +618,6 @@ class MainWindow(QMainWindow):
         """Erstellt die Statusleiste"""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(200)
-        self.progress_bar.setVisible(False)
-        self.status_bar.addPermanentWidget(self.progress_bar)
-        
         self.status_bar.showMessage("Bereit")
     
     def _check_dependencies(self):
@@ -649,19 +643,26 @@ class MainWindow(QMainWindow):
         self.sd_card = SDCard(path)
         self._folder_name_cache.clear()
 
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
         self.status_bar.showMessage("Scanne SD-Karte...")
-        
+
+        self._open_sd_dialog = QProgressDialog(
+            "SD-Karte wird gescannt...", "", 0, 100, self
+        )
+        self._open_sd_dialog.setWindowTitle("SD-Karte öffnen")
+        self._open_sd_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._open_sd_dialog.setMinimumDuration(0)
+        self._open_sd_dialog.setCancelButton(None)
+        self._open_sd_dialog.setValue(0)
+
         self.scanner = SDCardScanner(self.sd_card)
-        self.scanner.progress.connect(self.progress_bar.setValue)
+        self.scanner.progress.connect(self._open_sd_dialog.setValue)
         self.scanner.finished.connect(self._on_scan_finished)
         self.scanner.start()
-    
+
     def _on_scan_finished(self, success: bool):
         """Wird aufgerufen wenn der Scan abgeschlossen ist"""
-        self.progress_bar.setVisible(False)
-        
+        self._open_sd_dialog.close()
+
         if success:
             self.status_bar.showMessage(
                 f"SD-Karte geladen: {self.sd_card.folder_count} Ordner, "
