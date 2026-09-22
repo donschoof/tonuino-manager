@@ -1021,12 +1021,27 @@ class MainWindow(QMainWindow):
         self.btn_purge_card.setEnabled(False)
         self.status_bar.showMessage("SD-Karte wird bereinigt...")
 
+        # Modaler, unbestimmter Fortschrittsdialog ohne Abbrechen-Button: die
+        # Dateisystem-Operationen laufen nicht schrittweise/abbrechbar ab, aber
+        # die UI-Interaktion muss waehrend des Bereinigens gesperrt sein, damit
+        # niemand parallel auf der noch veraenderten SD-Karte agiert.
+        self._purge_dialog = QProgressDialog(
+            "SD-Karte wird bereinigt, bitte warten...", None, 0, 0, self
+        )
+        self._purge_dialog.setWindowTitle("SD-Karte bereinigen")
+        self._purge_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._purge_dialog.setCancelButton(None)
+        self._purge_dialog.setMinimumDuration(0)
+        self._purge_dialog.show()
+
         self._purge_worker = PurgeWorker(self.sd_card)
         self._purge_worker.finished.connect(self._on_purge_finished)
         self._purge_worker.start()
 
     def _on_purge_finished(self, success: bool, error_message: str):
         """Wird aufgerufen, wenn der Bereinigungs-Thread fertig ist"""
+        self._purge_dialog.close()
+
         if not success:
             self.btn_purge_card.setEnabled(True)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Bereinigen: {error_message}")
