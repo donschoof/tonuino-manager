@@ -19,7 +19,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoi
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor
 
 from core import __version__
-from core.sd_card import SDCard, Folder, Track, PurgePreview
+from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
@@ -140,7 +140,7 @@ class TrackAddWorker(QThread):
             next_number = 1
             while next_number in self._used_numbers:
                 next_number += 1
-            if next_number > 999:
+            if next_number > MAX_TRACKS_PER_FOLDER:
                 break
 
             dest_filename = f"{next_number:03d}.mp3"
@@ -1117,6 +1117,26 @@ class MainWindow(QMainWindow):
 
         if not files:
             return
+
+        free_slots = MAX_TRACKS_PER_FOLDER - self.current_folder.track_count
+        if len(files) > free_slots:
+            skipped = len(files) - max(free_slots, 0)
+            if free_slots <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Ordner voll",
+                    f"Der Ordner enthält bereits {MAX_TRACKS_PER_FOLDER} Tracks - "
+                    "mehr erlaubt TonUINO nicht."
+                )
+                return
+            QMessageBox.warning(
+                self,
+                "Zu viele Tracks",
+                f"Ein TonUINO-Ordner kann maximal {MAX_TRACKS_PER_FOLDER} Tracks enthalten. "
+                f"Es werden nur die ersten {free_slots} der {len(files)} gewählten "
+                f"Dateien hinzugefügt, {skipped} werden übersprungen."
+            )
+            files = files[:free_slots]
 
         self._add_tracks_errors = []
 
