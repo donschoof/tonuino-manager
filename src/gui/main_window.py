@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QProgressBar, QSplitter, QInputDialog,
+    QStatusBar, QSplitter, QInputDialog,
     QAbstractItemView, QProgressDialog, QApplication,
     QToolButton, QMenu, QComboBox
 )
@@ -19,7 +19,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoi
 from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
 
 from core import __version__
-from core.sd_card import SDCard, Folder, Track, PurgePreview
+from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
@@ -141,7 +141,7 @@ class TrackAddWorker(QThread):
             next_number = 1
             while next_number in self._used_numbers:
                 next_number += 1
-            if next_number > 999:
+            if next_number > MAX_TRACKS_PER_FOLDER:
                 break
 
             dest_filename = f"{next_number:03d}.mp3"
@@ -598,16 +598,11 @@ class MainWindow(QMainWindow):
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_label)
         
-        info_label = QLabel(
-            "Oeffne eine SD-Karte um zu beginnen.\n\n"
-            "- Verwalte deine Tonuio-Ordner\n"
-            "- Füge Musik hinzu mit automatischer Konvertierung\n"
-            "- Bearbeite Metadaten und Cover\n"
-            "- Programmiere RFID-Karten direkt"
-        )
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setWordWrap(True)
-        welcome_layout.addWidget(info_label)
+        self.welcome_info_label = QLabel()
+        self.welcome_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_info_label.setWordWrap(True)
+        welcome_layout.addWidget(self.welcome_info_label)
+        self._update_welcome_text()
         
         self.folder_widget = QWidget()
         folder_layout = QVBoxLayout(self.folder_widget)
@@ -712,12 +707,6 @@ class MainWindow(QMainWindow):
         """Erstellt die Statusleiste"""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(200)
-        self.progress_bar.setVisible(False)
-        self.status_bar.addPermanentWidget(self.progress_bar)
-        
         self.status_bar.showMessage("Bereit")
     
     def _check_dependencies(self):
@@ -743,19 +732,26 @@ class MainWindow(QMainWindow):
         self.sd_card = SDCard(path)
         self._folder_name_cache.clear()
 
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
         self.status_bar.showMessage("Scanne SD-Karte...")
-        
+
+        self._open_sd_dialog = QProgressDialog(
+            "SD-Karte wird gescannt...", "", 0, 100, self
+        )
+        self._open_sd_dialog.setWindowTitle("SD-Karte öffnen")
+        self._open_sd_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._open_sd_dialog.setMinimumDuration(0)
+        self._open_sd_dialog.setCancelButton(None)
+        self._open_sd_dialog.setValue(0)
+
         self.scanner = SDCardScanner(self.sd_card)
-        self.scanner.progress.connect(self.progress_bar.setValue)
+        self.scanner.progress.connect(self._open_sd_dialog.setValue)
         self.scanner.finished.connect(self._on_scan_finished)
         self.scanner.start()
-    
+
     def _on_scan_finished(self, success: bool):
         """Wird aufgerufen wenn der Scan abgeschlossen ist"""
-        self.progress_bar.setVisible(False)
-        
+        self._open_sd_dialog.close()
+
         if success:
             self.status_bar.showMessage(
                 f"SD-Karte geladen: {self.sd_card.folder_count} Ordner, "
@@ -796,6 +792,7 @@ class MainWindow(QMainWindow):
         self._folder_name_cache.clear()
 
         self.folder_list.clear()
+        self._update_welcome_text()
         self.player_bar.stop_and_clear()
         self.stack.setCurrentWidget(self.welcome_widget)
         self.btn_new_folder.setEnabled(False)
@@ -811,10 +808,25 @@ class MainWindow(QMainWindow):
             "Bitte öffne sie erneut, sobald sie wieder verbunden ist."
         )
 
+    def _update_welcome_text(self):
+        """Zeigt die Aufforderung zum Oeffnen nur, solange keine SD-Karte
+        geoeffnet ist; danach den Hinweis, einen Ordner zu waehlen"""
+        if getattr(self, "sd_card", None):
+            self.welcome_info_label.setText("Wähle links einen Ordner aus.")
+            return
+        self.welcome_info_label.setText(
+            "Oeffne eine SD-Karte um zu beginnen.\n\n"
+            "- Verwalte deine Tonuio-Ordner\n"
+            "- Füge Musik hinzu mit automatischer Konvertierung\n"
+            "- Bearbeite Metadaten und Cover\n"
+            "- Programmiere RFID-Karten direkt"
+        )
+
     def _populate_folder_list(self):
         """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen,
         gefolgt von den (nicht editierbaren) Tonuio-Systemordnern mp3/advert"""
         self.folder_list.clear()
+        self._update_welcome_text()
 
         if not self.sd_card:
             return
@@ -1112,6 +1124,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
+        self.player_bar.release_file()
         self.btn_purge_card.setEnabled(False)
         self.status_bar.showMessage("SD-Karte wird bereinigt...")
 
@@ -1171,6 +1184,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
+        self.player_bar.release_file()
         try:
             self.sd_card.delete_folder(folder.index)
             self._folder_name_cache.pop(folder.index, None)
@@ -1197,6 +1211,26 @@ class MainWindow(QMainWindow):
 
         if not files:
             return
+
+        free_slots = MAX_TRACKS_PER_FOLDER - self.current_folder.track_count
+        if len(files) > free_slots:
+            skipped = len(files) - max(free_slots, 0)
+            if free_slots <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Ordner voll",
+                    f"Der Ordner enthält bereits {MAX_TRACKS_PER_FOLDER} Tracks - "
+                    "mehr erlaubt TonUINO nicht."
+                )
+                return
+            QMessageBox.warning(
+                self,
+                "Zu viele Tracks",
+                f"Ein TonUINO-Ordner kann maximal {MAX_TRACKS_PER_FOLDER} Tracks enthalten. "
+                f"Es werden nur die ersten {free_slots} der {len(files)} gewählten "
+                f"Dateien hinzugefügt, {skipped} werden übersprungen."
+            )
+            files = files[:free_slots]
 
         self._add_tracks_errors = []
 
@@ -1269,6 +1303,8 @@ class MainWindow(QMainWindow):
         if not filepath:
             return
 
+        self.player_bar.release_file()
+
         import tempfile
 
         try:
@@ -1307,6 +1343,9 @@ class MainWindow(QMainWindow):
         """Zeigt den Track-Editor"""
         from gui.track_editor import TrackEditorDialog
         
+        if self.player_bar.is_current(track.filepath):
+            self.player_bar.release_file()
+
         metadata = self.metadata_manager.read_metadata(track.filepath)
         dialog = TrackEditorDialog(metadata, self)
         
@@ -1317,7 +1356,10 @@ class MainWindow(QMainWindow):
                 title=new_metadata.title,
                 artist=new_metadata.artist,
                 album=new_metadata.album,
-                track_number=new_metadata.track_number
+                track_number=new_metadata.track_number,
+                total_tracks=metadata.total_tracks,
+                genre=new_metadata.genre,
+                year=new_metadata.year
             )
             self._show_folder(self.current_folder)
 
@@ -1407,6 +1449,7 @@ class MainWindow(QMainWindow):
         if not confirm_action(self, "Tracks löschen", message):
             return
 
+        self.player_bar.release_file()
         try:
             self.sd_card.delete_tracks(self.current_folder, tracks)
             self._folder_name_cache.pop(self.current_folder.index, None)
@@ -1435,6 +1478,7 @@ class MainWindow(QMainWindow):
         new_order = list(self.current_folder.tracks)
         new_order[row], new_order[target_row] = new_order[target_row], new_order[row]
 
+        self.player_bar.release_file()
         try:
             self.sd_card.reorder_tracks(self.current_folder, new_order)
             self._folder_name_cache.pop(self.current_folder.index, None)
