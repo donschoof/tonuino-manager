@@ -200,6 +200,12 @@ class PurgeWorker(QThread):
             self.finished.emit(False, str(e))
 
 
+TONUINO_IDLE_HINT = (
+    "\n\nHinweis: Der TonUINO muss dafür im Leerlauf (IDLE) oder in Pause sein "
+    "- nicht während der Wiedergabe."
+)
+
+
 class TonuinoCardWorker(QThread):
     """Fuehrt eine Karten-Programmierung ueber den seriell verbundenen TonUINO aus
     (WRITECARD-Befehl), damit die UI waehrend der - potenziell langen, da die
@@ -1881,11 +1887,13 @@ class MainWindow(QMainWindow):
                 f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann für "
                 f"Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
                 f"programmiert werden?"
+                f"{TONUINO_IDLE_HINT}"
             )
         else:
             confirm_text = (
                 f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann als "
                 f"\'{mode_label}\'-Karte programmiert werden?"
+                f"{TONUINO_IDLE_HINT}"
             )
 
         confirmed = confirm_action(self, "Karte programmieren", confirm_text, default_no=False)
@@ -1909,7 +1917,8 @@ class MainWindow(QMainWindow):
             "Admin-Karte programmieren",
             "Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann als "
             "Admin-Karte programmiert werden?\n\nEine Admin-Karte ist keinem "
-            "Ordner zugeordnet und öffnet am TonUINO das Admin-Menü.",
+            "Ordner zugeordnet und öffnet am TonUINO das Admin-Menü."
+            + TONUINO_IDLE_HINT,
             default_no=False
         )
         if not confirmed:
@@ -1931,7 +1940,8 @@ class MainWindow(QMainWindow):
         self.btn_tonuino_cancel_write.setVisible(True)
         self.btn_tonuino_cancel_write.setEnabled(True)
         self.tonuino_status_label.setText(
-            "Bitte jetzt eine leere Karte auf den TonUINO-Leser legen - Programmierung läuft..."
+            "Bitte jetzt eine leere Karte auf den TonUINO-Leser legen "
+            "(TonUINO muss im Leerlauf oder in Pause sein) - Programmierung läuft..."
         )
 
         self._tonuino_worker = TonuinoCardWorker(self.tonuino_serial, mode, folder, special, special2)
