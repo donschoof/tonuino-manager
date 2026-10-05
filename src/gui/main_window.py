@@ -1235,7 +1235,10 @@ class MainWindow(QMainWindow):
                 title=new_metadata.title,
                 artist=new_metadata.artist,
                 album=new_metadata.album,
-                track_number=new_metadata.track_number
+                track_number=new_metadata.track_number,
+                total_tracks=metadata.total_tracks,
+                genre=new_metadata.genre,
+                year=new_metadata.year
             )
             self._show_folder(self.current_folder)
 
