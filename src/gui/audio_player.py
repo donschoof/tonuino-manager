@@ -7,7 +7,7 @@ import ctypes
 import sys
 
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QCoreApplication, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -200,11 +200,20 @@ class AudioPlayerBar(QFrame):
     def stop(self):
         self.player.stop()
 
+    def release_file(self):
+        """Gibt die aktuell geladene Datei frei (Wiedergabe stoppen, Quelle entladen),
+        damit sie umbenannt, ueberschrieben oder geloescht werden kann - unter Windows
+        haelt QMediaPlayer sie sonst gesperrt. Ruft vor jeder Dateiaktion auf."""
+        if self._current_path is not None:
+            self.stop_and_clear()
+
     def stop_and_clear(self):
         """Stoppt die Wiedergabe und setzt den Player zurueck (z.B. bei Ordnerwechsel
         oder wenn sich die Track-Liste aendert und der aktuelle Pfad ungueltig werden koennte)"""
         self.player.stop()
         self.player.setSource(QUrl())
+        # Dem Medien-Backend Gelegenheit geben, das Dateihandle wirklich zu schliessen
+        QCoreApplication.processEvents()
         self._current_path = None
         self.title_label.setText("Kein Track ausgewählt")
         self.btn_play_pause.setIcon(_icon_from_glyph(_ICON_PLAY, color="#cdd6f4"))

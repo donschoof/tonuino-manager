@@ -1030,6 +1030,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
+        self.player_bar.release_file()
         self.btn_purge_card.setEnabled(False)
         self.status_bar.showMessage("SD-Karte wird bereinigt...")
 
@@ -1089,6 +1090,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
+        self.player_bar.release_file()
         try:
             self.sd_card.delete_folder(folder.index)
             self._folder_name_cache.pop(folder.index, None)
@@ -1187,6 +1189,8 @@ class MainWindow(QMainWindow):
         if not filepath:
             return
 
+        self.player_bar.release_file()
+
         import tempfile
 
         try:
@@ -1225,6 +1229,9 @@ class MainWindow(QMainWindow):
         """Zeigt den Track-Editor"""
         from gui.track_editor import TrackEditorDialog
         
+        if self.player_bar.is_current(track.filepath):
+            self.player_bar.release_file()
+
         metadata = self.metadata_manager.read_metadata(track.filepath)
         dialog = TrackEditorDialog(metadata, self)
         
@@ -1325,6 +1332,7 @@ class MainWindow(QMainWindow):
         if not confirm_action(self, "Tracks löschen", message):
             return
 
+        self.player_bar.release_file()
         try:
             self.sd_card.delete_tracks(self.current_folder, tracks)
             self._folder_name_cache.pop(self.current_folder.index, None)
@@ -1353,6 +1361,7 @@ class MainWindow(QMainWindow):
         new_order = list(self.current_folder.tracks)
         new_order[row], new_order[target_row] = new_order[target_row], new_order[row]
 
+        self.player_bar.release_file()
         try:
             self.sd_card.reorder_tracks(self.current_folder, new_order)
             self._folder_name_cache.pop(self.current_folder.index, None)
