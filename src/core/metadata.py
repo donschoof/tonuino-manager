@@ -118,51 +118,57 @@ class MetadataManager:
     def write_metadata(
         self,
         filepath: str,
-        title: str = "",
-        artist: str = "",
-        album: str = "",
-        album_artist: str = "",
-        track_number: int = 0,
+        title: Optional[str] = None,
+        artist: Optional[str] = None,
+        album: Optional[str] = None,
+        album_artist: Optional[str] = None,
+        track_number: Optional[int] = None,
         total_tracks: int = 0,
-        genre: str = "",
-        year: str = ""
+        genre: Optional[str] = None,
+        year: Optional[str] = None
     ) -> bool:
-        """Schreibt Metadaten in eine MP3-Datei"""
+        """Schreibt Metadaten in eine MP3-Datei.
+
+        None = Feld unveraendert lassen, leerer String (bzw. Tracknummer 0) =
+        vorhandenen Tag entfernen, sonst Tag setzen."""
         if not self._mutagen_available:
             return False
-        
+
         try:
-            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, TRCK, TCON, TDRC
+            from mutagen.id3 import TIT2, TPE1, TALB, TPE2, TRCK, TCON, TDRC
 
             audio = self._open_mp3(filepath)
 
             # ID3-Tags erstellen falls nicht vorhanden
             if audio.tags is None:
                 audio.add_tags()
-            
+
             tags = audio.tags
-            
-            if title:
-                tags["TIT2"] = TIT2(encoding=3, text=title)
-            if artist:
-                tags["TPE1"] = TPE1(encoding=3, text=artist)
-            if album:
-                tags["TALB"] = TALB(encoding=3, text=album)
-            if album_artist:
-                tags["TPE2"] = TPE2(encoding=3, text=album_artist)
-            if track_number > 0:
-                if total_tracks > 0:
-                    tags["TRCK"] = TRCK(encoding=3, text=f"{track_number}/{total_tracks}")
+
+            def apply(key, frame_cls, value):
+                if value is None:
+                    return
+                if value:
+                    tags[key] = frame_cls(encoding=3, text=value)
                 else:
-                    tags["TRCK"] = TRCK(encoding=3, text=str(track_number))
-            if genre:
-                tags["TCON"] = TCON(encoding=3, text=genre)
-            if year:
-                tags["TDRC"] = TDRC(encoding=3, text=year)
-            
+                    tags.delall(key)
+
+            apply("TIT2", TIT2, title)
+            apply("TPE1", TPE1, artist)
+            apply("TALB", TALB, album)
+            apply("TPE2", TPE2, album_artist)
+            if track_number is not None:
+                if track_number > 0:
+                    text = f"{track_number}/{total_tracks}" if total_tracks > 0 else str(track_number)
+                    tags["TRCK"] = TRCK(encoding=3, text=text)
+                else:
+                    tags.delall("TRCK")
+            apply("TCON", TCON, genre)
+            apply("TDRC", TDRC, year)
+
             audio.save()
             return True
-            
+
         except Exception as e:
             print(f"Fehler beim Schreiben der Metadaten: {e}")
             return False
