@@ -30,6 +30,7 @@ gemeldet wird; laeuft kein Schreibvorgang, antwortet die Firmware sofort mit
 "WRITECARD: kein Schreibvorgang aktiv, nichts abzubrechen".
 """
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -37,6 +38,11 @@ from typing import Dict, List, Optional
 
 class TonuinoSerialError(Exception):
     """Fehler bei der seriellen Kommunikation mit dem TonUINO"""
+    pass
+
+
+class TonuinoWriteCancelled(TonuinoSerialError):
+    """Der Schreibvorgang wurde vom Benutzer abgebrochen"""
     pass
 
 
@@ -121,6 +127,7 @@ class TonuinoSerial:
 
     def __init__(self):
         self._serial = None
+        self._cancel_event = threading.Event()
 
     @property
     def is_connected(self) -> bool:
@@ -270,15 +277,33 @@ class TonuinoSerial:
             parts.append(str(special2))
         command = "WRITECARD " + ",".join(parts) + "\n"
 
+        self._cancel_event.clear()
         try:
+            # Reste eines frueheren (z.B. abgebrochenen) Vorgangs verwerfen,
+            # damit sie nicht als Antwort auf diesen Befehl gelesen werden.
+            self._serial.reset_input_buffer()
             self._serial.write(command.encode("ascii"))
             self._serial.flush()
         except Exception as e:
             raise TonuinoSerialError(f"Senden an TonUINO fehlgeschlagen: {e}") from e
 
         deadline = time.monotonic() + timeout
+        cancel_grace_set = False
         while True:
+            if self._cancel_event.is_set():
+                # Abbruch angefordert: der Firmware kurz Zeit fuer ihre
+                # ERROR-Rueckmeldung geben, danach lokal beenden - auch wenn
+                # sie nicht reagiert.
+                if not cancel_grace_set:
+                    deadline = min(deadline, time.monotonic() + 1.5)
+                    cancel_grace_set = True
             line = self._read_line(deadline)
+            if self._cancel_event.is_set() and (line is None or line.startswith("WRITECARD: ")):
+                try:
+                    self._serial.reset_input_buffer()
+                except Exception:
+                    pass
+                raise TonuinoWriteCancelled("Programmierung abgebrochen")
             if line is None:
                 raise TonuinoSerialError(
                     "Zeitüberschreitung: keine Rückmeldung vom TonUINO. "

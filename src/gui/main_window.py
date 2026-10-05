@@ -24,7 +24,7 @@ from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYT
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, PLAYBACK_MODES
-from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
+from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
 from gui.update_dialog import UpdateDialog
@@ -223,6 +223,8 @@ class TonuinoCardWorker(QThread):
                 self.mode, folder=self.folder, special=self.special, special2=self.special2
             )
             self.finished.emit(True, message)
+        except TonuinoWriteCancelled as e:
+            self.finished.emit(False, str(e))
         except (TonuinoSerialError, ValueError) as e:
             self.finished.emit(False, str(e))
         except Exception as e:
@@ -1922,6 +1924,7 @@ class MainWindow(QMainWindow):
         Firmware wartet ohne eigenes Timeout darauf, dass eine Karte aufgelegt
         wird, daher kann das beliebig lange dauern; per btn_tonuino_cancel_write
         kann der Vorgang abgebrochen werden (WRITECARD CANCEL)."""
+        self._tonuino_cancel_requested = False
         self.btn_program_card.setEnabled(False)
         self.btn_program_admin.setEnabled(False)
         self.btn_tonuino_connect.setEnabled(False)
@@ -1939,6 +1942,7 @@ class MainWindow(QMainWindow):
         """Bricht eine laufende TonUINO-Kartenprogrammierung ab (WRITECARD CANCEL) -
         das Ergebnis (Fehler-Abschluss) kommt ueber den laufenden TonuinoCardWorker
         und _on_tonuino_write_finished() zurueck, nicht hier."""
+        self._tonuino_cancel_requested = True
         self.btn_tonuino_cancel_write.setEnabled(False)
         self.tonuino_status_label.setText("Abbruch angefordert...")
         try:
