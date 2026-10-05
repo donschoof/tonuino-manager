@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
 
+# Maximale Anzahl Tracks pro Ordner (TonUINO adressiert Tracks mit einem Byte)
+MAX_TRACKS_PER_FOLDER = 255
+
+
 @dataclass
 class Track:
     """Repraesentiert einen einzelnen Track"""
