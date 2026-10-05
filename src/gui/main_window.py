@@ -504,16 +504,11 @@ class MainWindow(QMainWindow):
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_label)
         
-        info_label = QLabel(
-            "Oeffne eine SD-Karte um zu beginnen.\n\n"
-            "- Verwalte deine Tonuio-Ordner\n"
-            "- Füge Musik hinzu mit automatischer Konvertierung\n"
-            "- Bearbeite Metadaten und Cover\n"
-            "- Programmiere RFID-Karten direkt"
-        )
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setWordWrap(True)
-        welcome_layout.addWidget(info_label)
+        self.welcome_info_label = QLabel()
+        self.welcome_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_info_label.setWordWrap(True)
+        welcome_layout.addWidget(self.welcome_info_label)
+        self._update_welcome_text()
         
         self.folder_widget = QWidget()
         folder_layout = QVBoxLayout(self.folder_widget)
@@ -703,6 +698,7 @@ class MainWindow(QMainWindow):
         self._folder_name_cache.clear()
 
         self.folder_list.clear()
+        self._update_welcome_text()
         self.player_bar.stop_and_clear()
         self.stack.setCurrentWidget(self.welcome_widget)
         self.btn_new_folder.setEnabled(False)
@@ -718,10 +714,25 @@ class MainWindow(QMainWindow):
             "Bitte öffne sie erneut, sobald sie wieder verbunden ist."
         )
 
+    def _update_welcome_text(self):
+        """Zeigt die Aufforderung zum Oeffnen nur, solange keine SD-Karte
+        geoeffnet ist; danach den Hinweis, einen Ordner zu waehlen"""
+        if getattr(self, "sd_card", None):
+            self.welcome_info_label.setText("Wähle links einen Ordner aus.")
+            return
+        self.welcome_info_label.setText(
+            "Oeffne eine SD-Karte um zu beginnen.\n\n"
+            "- Verwalte deine Tonuio-Ordner\n"
+            "- Füge Musik hinzu mit automatischer Konvertierung\n"
+            "- Bearbeite Metadaten und Cover\n"
+            "- Programmiere RFID-Karten direkt"
+        )
+
     def _populate_folder_list(self):
         """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen,
         gefolgt von den (nicht editierbaren) Tonuio-Systemordnern mp3/advert"""
         self.folder_list.clear()
+        self._update_welcome_text()
 
         if not self.sd_card:
             return
