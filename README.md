@@ -1,6 +1,6 @@
 # Tonuino-Manager
 
-**Version 1.2.5**
+**Version 1.3.0**
 
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 <img width="1202" height="832" alt="image" src="https://github.com/user-attachments/assets/b4de6994-a1de-4682-bd77-5a0a43d3672a" />
@@ -15,6 +15,7 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 - **Metadaten-Editor**: ID3-Tags (Titel, Interpret, Album, Tracknummer, Genre, Jahr) direkt bearbeiten
 - **Automatische Ordnernamen & Cover**: Ordnername wird aus dem Album-Tag des ersten Tracks abgeleitet, das Cover aus dem eingebetteten ID3-Cover-Art der Tracks
 - **RFID-Programmierung**: Direkte Programmierung über den ACR122U-Reader – reguläre Ordnerkarten (mit Wiedergabemodus) und Admin-Karten, mit automatischer Kartentyp-Erkennung und Live-Status (Reader/Karte/Programmierstatus) in der Sidebar
+- **Kartenprogrammierung direkt über den TonUINO**: Alternativ zum ACR122U lässt sich eine Karte auch über den per USB angeschlossenen TonUINO selbst programmieren (Firmware mit `#define SerialInputAsCommand`), ohne extra RFID-Leser
 - **Modernes UI**: Dark Theme mit eigenem App-Icon
 - **Automatische Updates**: Prüft beim Start auf neue GitHub-Releases und zeigt einen Hinweis an
 
@@ -149,6 +150,10 @@ Programmierbar sind:
 
 - **Ordnerkarten**: verknüpfen eine Karte mit einem Ordner und einem Wiedergabemodus (Hörspiel, Album, Party, Einzelner Track, Hörbuch)
 - **Admin-Karten**: öffnen am TonUINO das Admin-Menü, sind keinem Ordner zugeordnet
+
+### Alternative: Programmieren direkt über den TonUINO
+
+Wer keinen eigenen RFID-Leser hat, kann Karten stattdessen über den TonUINO selbst programmieren lassen – dafür muss die Firmware ([TonUINO-TNG](https://github.com/tonuino/TonUINO-TNG)) mit aktiviertem `#define SerialInputAsCommand` (in `src/constants.hpp`) gebaut sein. Im Dropdown **"Leser"** im RFID-Bereich der Sidebar lässt sich zwischen **ACR122U** (Standard) und **TonUINO (seriell)** umschalten; im TonUINO-Modus per USB-Seriell verbinden und dann wie gewohnt über "Karte programmieren"/"Admin-Karte programmieren" fortfahren – der Tonuino-Manager steuert dabei das Admin-Menü des Geräts ("Neue Karte anlegen") fern, während die Karte auf dem TonUINO-eigenen Leser liegt, und beschreibt sie genauso, wie es die Firmware auch bei Bedienung per Tasten täte. Das Löschen einzelner Karten (Papierkorb-Icon) ist weiterhin nur über den ACR122U möglich.
 
 ## Lizenz
 

@@ -63,6 +63,15 @@ a = Analysis(
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
         'PyQt6.QtMultimedia',
+        # pyserial waehlt sein tools.list_ports-Backend je nach Plattform per
+        # dynamischem Import zur Laufzeit aus - PyInstallers statische Analyse
+        # findet das nicht von selbst und muss es explizit genannt bekommen,
+        # sonst schlaegt die Port-Erkennung nur in der gebauten EXE fehl.
+        'serial',
+        'serial.tools.list_ports',
+        'serial.tools.list_ports_windows',
+        'serial.tools.list_ports_linux',
+        'serial.tools.list_ports_osx',
     ],
     hookspath=[],
     hooksconfig={},
