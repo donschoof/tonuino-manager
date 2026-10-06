@@ -27,7 +27,22 @@ QMainWindow {
    Windows-Standard, waehrend QWidget weiter unten die Schrift hell faerbt -
    das ergibt helle Schrift auf hellem Grund und damit kaum lesbare Dialoge. */
 QDialog, QMessageBox {
+    background-color: #2b2c3f;
+    border: 1px solid #6c7086;
+}
+
+/* Dialog ist heller als das Hauptfenster - Eingabefelder und Buttons
+   brauchen darin eigene Toene, sonst gehen sie im Dialoggrund unter. */
+QDialog QLineEdit, QDialog QTextEdit, QDialog QComboBox, QDialog QSpinBox {
     background-color: #1e1e2e;
+}
+
+QDialog QPushButton {
+    background-color: #3b3d52;
+}
+
+QDialog QPushButton:hover {
+    background-color: #4a4c63;
 }
 
 QMessageBox QLabel {
