@@ -2,7 +2,9 @@
 Update-Pruefung und -Download fuer Tonuino-Manager (GitHub Releases)
 """
 
+import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -14,6 +16,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+
+log = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com/repos/donschoof/tonuino-manager/releases/latest"
 GITHUB_RELEASES_PAGE = "https://github.com/donschoof/tonuino-manager/releases/latest"
@@ -30,6 +34,9 @@ class UpdateInfo:
     asset_url: str
     asset_name: str
     asset_size: int
+    # SHA-256 des Assets im Format 'sha256:<hex>' (von GitHub zu jedem Release-Asset
+    # geliefert); leer, falls die API es nicht mitschickt
+    asset_digest: str = ""
 
 
 def parse_version(version: str) -> tuple:
@@ -65,6 +72,14 @@ def _asset_pattern_for_platform() -> Optional[re.Pattern]:
         arch = "arm64" if platform.machine() == "arm64" else "intel"
         return re.compile(rf"^Tonuino-Manager-.*-{arch}\.dmg$")
     return None
+
+
+def expected_sha256(digest: str) -> str:
+    """Hex-SHA-256 aus einem GitHub-Asset-Digest ('sha256:<hex>'), sonst ''"""
+    prefix = "sha256:"
+    if digest and digest.lower().startswith(prefix):
+        return digest[len(prefix):].strip().lower()
+    return ""
 
 
 def select_asset(assets: list) -> Optional[dict]:
@@ -125,6 +140,7 @@ class UpdateChecker(QThread):
                 asset_url=asset["browser_download_url"],
                 asset_name=asset["name"],
                 asset_size=asset.get("size", 0),
+                asset_digest=asset.get("digest") or "",
             )
             self.update_available.emit(info)
         except Exception as e:
@@ -149,7 +165,12 @@ class UpdateDownloader(QThread):
         self._cancelled = True
 
     def run(self):
-        dest_path = os.path.join(tempfile.gettempdir(), self.info.asset_name)
+        # Eigener frischer Ordner und nur der Dateiname des Assets: ein vorab
+        # angelegter Pfad im Temp-Verzeichnis kann so nicht uebernommen werden
+        dest_dir = tempfile.mkdtemp(prefix="tonuino-manager-update-")
+        dest_path = os.path.join(dest_dir, os.path.basename(self.info.asset_name))
+        expected = expected_sha256(self.info.asset_digest)
+        sha256 = hashlib.sha256()
         try:
             request = urllib.request.Request(
                 self.info.asset_url, headers={"User-Agent": USER_AGENT}
@@ -165,18 +186,36 @@ class UpdateDownloader(QThread):
                         if not chunk:
                             break
                         f.write(chunk)
+                        sha256.update(chunk)
                         read += len(chunk)
                         self.progress.emit(read, total)
 
             if self._cancelled:
-                os.remove(dest_path)
+                self._cleanup(dest_path)
                 return
+
+            if total and read != total:
+                raise RuntimeError(f"Download unvollstaendig ({read} von {total} Bytes)")
+
+            if expected:
+                if sha256.hexdigest() != expected:
+                    raise RuntimeError(
+                        "Die Pruefsumme (SHA-256) des Downloads stimmt nicht mit der von "
+                        "GitHub gemeldeten ueberein - der Installer wird nicht gestartet."
+                    )
+            else:
+                log.warning("GitHub lieferte keine Pruefsumme fuer %s - nicht geprueft", self.info.asset_name)
 
             self.completed.emit(dest_path)
         except Exception as e:
-            if os.path.exists(dest_path):
-                try:
-                    os.remove(dest_path)
-                except OSError:
-                    pass
+            self._cleanup(dest_path)
             self.error.emit(str(e))
+
+    @staticmethod
+    def _cleanup(dest_path: str):
+        """Entfernt die teilweise/ungueltige Datei samt ihrem Temp-Ordner"""
+        for remove in (os.remove, os.rmdir):
+            try:
+                remove(dest_path if remove is os.remove else os.path.dirname(dest_path))
+            except OSError:
+                pass
