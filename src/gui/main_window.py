@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     READER_MODE_TONUINO = "tonuino"
 
     # Kantenlaenge (px) des Ordner-Covers im Kopfbereich
-    FOLDER_COVER_SIZE = 170
+    FOLDER_COVER_SIZE = 150
 
     # Breite des Fensterrands (px), an dem unter Windows die Groesse geaendert wird
     RESIZE_BORDER = 6
@@ -124,6 +124,12 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        # Sidebar hat ohnehin feste Breite (siehe _create_sidebar): Griff ohne Breite und abgeschaltet, damit es
+        # weder eine Kante noch den Groessen-Mauszeiger gibt. Die Trennlinie
+        # zieht die Sidebar selbst (border-right).
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(0)
+        splitter.handle(1).setEnabled(False)
         
         main_layout.addWidget(splitter)
 
@@ -299,8 +305,13 @@ class MainWindow(QMainWindow):
     def _create_main_content(self) -> QWidget:
         """Erstellt den Hauptbereich"""
         content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(20, 10, 20, 20)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(28, 24, 28, 20)
         layout.setSpacing(16)
 
         self.welcome_widget = QWidget()
@@ -320,9 +331,11 @@ class MainWindow(QMainWindow):
         
         self.folder_widget = QWidget()
         folder_layout = QVBoxLayout(self.folder_widget)
-        folder_layout.setContentsMargins(9, 0, 9, 9)  # oben kein zusaetzlicher Abstand
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(18)
 
-        # Player ganz oben: Karte in voller Breite, Inhalt zentriert (siehe AudioPlayerBar)
+        # Player als Fusszeile: ganz unten im Inhaltsbereich, ueber die volle Breite
+        # (wird unten nach dem Stack eingefuegt, siehe AudioPlayerBar)
         self.player_bar = AudioPlayerBar()
         self.player_bar.track_info_provider = self._player_track_info
         self.player_bar.prev_clicked.connect(self._play_previous_track)
@@ -331,16 +344,15 @@ class MainWindow(QMainWindow):
         self.player_bar.playback_changed.connect(self._update_player_navigation)
         self.player_bar.play_requested.connect(self._play_selected_track)
 
-        folder_layout.addWidget(self.player_bar)
-
         # Kopfbereich wie in Apple Music: grosses Cover links, rechts Name, Ordner-
         # nummer und Infozeile, darunter (unten buendig mit dem Cover) die Aktionen.
         # Feste Hoehe (= Cover), damit die Stretches im Textblock das Layout nicht
         # vertikal aufblaehen.
-        folder_header = QWidget()
-        folder_header.setFixedHeight(self.FOLDER_COVER_SIZE)
+        folder_header = QFrame()
+        folder_header.setObjectName("heroCard")
+        folder_header.setFixedHeight(self.FOLDER_COVER_SIZE + 2 * 20)
         header_layout = QHBoxLayout(folder_header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setContentsMargins(20, 20, 20, 20)
         header_layout.setSpacing(24)
 
         self.cover_label = CoverEditWidget(self.FOLDER_COVER_SIZE)
@@ -394,11 +406,15 @@ class MainWindow(QMainWindow):
         folder_layout.addWidget(folder_header)
 
         track_header_layout = QHBoxLayout()
-        track_header_layout.addWidget(QLabel("Tracks:"))
+        track_header_layout.setSpacing(6)
+        tracks_title = QLabel("Tracks")
+        tracks_title.setObjectName("sectionTitle")
+        track_header_layout.addWidget(tracks_title)
         track_header_layout.addStretch()
 
         self.btn_multi_select = QPushButton(" Auswählen")
         self.btn_multi_select.setIcon(icon_from_glyph("\ue877", color=theme.TEXT))  # Done all
+        self.btn_multi_select.setObjectName("ghostButton")
         self.btn_multi_select.setCheckable(True)
         self.btn_multi_select.setToolTip("Mehrfachauswahl ein-/ausschalten")
         self.btn_multi_select.setEnabled(False)
@@ -407,6 +423,7 @@ class MainWindow(QMainWindow):
 
         self.btn_move_track_up = QPushButton()
         self.btn_move_track_up.setIcon(icon_from_glyph("", color=theme.TEXT))  # Up
+        self.btn_move_track_up.setObjectName("ghostButton")
         self.btn_move_track_up.setToolTip("Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
         self.btn_move_track_up.clicked.connect(lambda: self._move_selected_tracks(-1))
@@ -414,14 +431,15 @@ class MainWindow(QMainWindow):
 
         self.btn_move_track_down = QPushButton()
         self.btn_move_track_down.setIcon(icon_from_glyph("", color=theme.TEXT))  # Down
+        self.btn_move_track_down.setObjectName("ghostButton")
         self.btn_move_track_down.setToolTip("Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
         self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
         track_header_layout.addWidget(self.btn_move_track_down)
 
         self.btn_delete_tracks = QPushButton(" Track löschen")
-        self.btn_delete_tracks.setObjectName("dangerButton")
-        self.btn_delete_tracks.setIcon(icon_from_glyph("", color=theme.BASE))  # Delete
+        self.btn_delete_tracks.setObjectName("ghostDangerButton")
+        self.btn_delete_tracks.setIcon(icon_from_glyph("", color=theme.RED))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
@@ -429,6 +447,7 @@ class MainWindow(QMainWindow):
         folder_layout.addLayout(track_header_layout)
 
         self.track_list = HoverListWidget()
+        self.track_list.setObjectName("trackList")
         self.track_list.setIconSize(QSize(18, 18))
         self.track_list.hovered_row_changed.connect(self._on_track_hover_changed)
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
@@ -442,7 +461,10 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.folder_widget)
         
         layout.addWidget(self.stack)
-        
+
+        content_layout.addWidget(body, 1)
+        content_layout.addWidget(self.player_bar)
+
         return content
     
     def _setup_statusbar(self):
@@ -450,6 +472,9 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Bereit")
+        # Ausgeblendet: die Leiste brachte kaum Information. Die Objekt-Referenz
+        # bleibt, damit showMessage()-Aufrufe im Code weiter ins Leere laufen.
+        self.status_bar.hide()
     
     def _check_dependencies(self):
         """Prueft verfuegbare Abhaengigkeiten"""

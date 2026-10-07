@@ -280,6 +280,41 @@ QPushButton#dangerButton:disabled {
     border-color: @SURFACE0@;
 }
 
+/* Werkzeugleiste ueber der Track-Liste: flach, nur beim Ueberfahren sichtbar */
+QPushButton#ghostButton,
+QPushButton#ghostDangerButton {
+    background: transparent;
+    border: 1px solid transparent;
+    color: @SUBTEXT0@;
+    padding: 6px 12px;
+}
+
+QPushButton#ghostButton:hover {
+    background-color: @SURFACE0@;
+    color: @TEXT@;
+}
+
+QPushButton#ghostButton:checked {
+    background-color: @BLUE@;
+    color: @BASE@;
+}
+
+QPushButton#ghostDangerButton {
+    color: @RED@;
+}
+
+QPushButton#ghostDangerButton:hover {
+    background-color: @RED@;
+    color: @BASE@;
+}
+
+QPushButton#ghostButton:disabled,
+QPushButton#ghostDangerButton:disabled {
+    background: transparent;
+    border-color: transparent;
+    color: @SURFACE2@;
+}
+
 QPushButton#successButton {
     background-color: @GREEN@;
     color: @BASE@;
@@ -320,6 +355,20 @@ QListWidget::indicator {
 QListWidget::indicator:checked {
     background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
         stop:0 @BLUE@, stop:0.38 @BLUE@, stop:0.5 transparent, stop:1 transparent);
+}
+
+/* Track-Liste: schlanke Zeilen ohne Rahmen */
+QListWidget#trackList {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    outline: none;
+}
+
+QListWidget#trackList::item {
+    padding: 4px 10px;
+    margin: 1px 0px;
+    border-radius: 8px;
 }
 
 QListWidget::item:selected {
@@ -605,6 +654,50 @@ QLabel#playerTitle {
 QLabel#playerMeta {
     font-size: 9pt;
     color: @OVERLAY2@;
+}
+
+/* Kopfkarte des Ordners (Cover, Name, Aktionen) */
+QFrame#heroCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @SURFACE0@, stop:1 @MANTLE@);
+    border: 1px solid @SURFACE0@;
+    border-radius: 14px;
+}
+
+QLabel#sectionTitle {
+    font-size: 13pt;
+    font-weight: bold;
+    color: @TEXT@;
+}
+
+/* Play/Pause im Player: heller Kreis */
+QPushButton#playButton,
+QPushButton#playButton:pressed {
+    background-color: @TEXT@;
+    border: none;
+    border-radius: 22px;
+    padding: 0px;
+    min-width: 44px;
+    max-width: 44px;
+    min-height: 44px;
+    max-height: 44px;
+}
+
+QPushButton#playButton:hover {
+    background-color: @WHITE@;
+}
+
+QPushButton#playButton:disabled {
+    background-color: @SURFACE0@;
+    border: none;
+    border-radius: 22px;
+}
+
+/* Player-Fusszeile: buendig am unteren Rand, nur Trennlinie oben */
+QFrame#playerFooter {
+    background-color: @MANTLE@;
+    border: none;
+    border-top: 1px solid @SURFACE0@;
+    border-radius: 0;
 }
 
 /* === Frame === */

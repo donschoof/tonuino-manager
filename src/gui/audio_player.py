@@ -60,6 +60,7 @@ _ICON_VOLUME_OFF = "\ue04f"   # volume_off
 
 # Farbe deaktivierter Steuerelemente (muss zu QSlider:disabled/QLabel:disabled in styles.py passen)
 _DISABLED_COLOR = theme.SURFACE1
+_PLAY_ICON_SIZE = 28  # Symbol im hellen Play-Kreis (Button 44 px)
 
 
 def _transport_icon(glyph: str, size: int, main_color: str, hover_color: str) -> QIcon:
@@ -221,7 +222,7 @@ def _format_time(milliseconds: int) -> str:
 
 
 class AudioPlayerBar(QFrame):
-    """Kompakter, klassischer Player fuer den Kopfbereich (neben dem Cover):
+    """Kompakter, klassischer Player als Fusszeile des Inhaltsbereichs:
     Titel, Zurueck/Play-Pause/Weiter, Fortschritt und Lautstaerke.
     Die Zurueck/Weiter-Navigation kennt selbst keine Ordner-/Tracklogik -
     dafuer werden prev_clicked/next_clicked emittiert, die das Hauptfenster
@@ -241,7 +242,7 @@ class AudioPlayerBar(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("cardFrame")
+        self.setObjectName("playerFooter")
 
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
@@ -291,10 +292,10 @@ class AudioPlayerBar(QFrame):
         transport.addWidget(self.btn_prev, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_play_pause = QPushButton()
-        self.btn_play_pause.setObjectName("transportButton")
-        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, theme.TEXT, theme.WHITE))
-        self.btn_play_pause.setIconSize(QSize(40, 40))
-        self.btn_play_pause.setFixedSize(46, 46)
+        self.btn_play_pause.setObjectName("playButton")
+        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, _PLAY_ICON_SIZE, theme.BASE, theme.BASE))
+        self.btn_play_pause.setIconSize(QSize(_PLAY_ICON_SIZE, _PLAY_ICON_SIZE))
+        self.btn_play_pause.setFixedSize(44, 44)
         self.btn_play_pause.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_play_pause.setEnabled(False)
         self.btn_play_pause.setToolTip("Wiedergabe starten/pausieren")
@@ -441,7 +442,7 @@ class AudioPlayerBar(QFrame):
         QCoreApplication.processEvents()
         self._current_path = None
         self._show_track_info(None, "Kein Track ausgewählt")
-        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, theme.TEXT, theme.WHITE))
+        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, _PLAY_ICON_SIZE, theme.BASE, theme.BASE))
         self._update_play_enabled()
         self._set_loaded_state(False)
         self.seek_slider.setRange(0, 0)
@@ -512,7 +513,7 @@ class AudioPlayerBar(QFrame):
 
     def _on_playback_state_changed(self, state):
         glyph = _ICON_PAUSE if state == QMediaPlayer.PlaybackState.PlayingState else _ICON_PLAY
-        self.btn_play_pause.setIcon(_transport_icon(glyph, 40, theme.TEXT, theme.WHITE))
+        self.btn_play_pause.setIcon(_transport_icon(glyph, _PLAY_ICON_SIZE, theme.BASE, theme.BASE))
         self.playback_changed.emit()
 
     def _on_position_changed(self, position: int):
