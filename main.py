@@ -23,7 +23,6 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QFontDatabase
 from core import __version__
 from gui.main_window import MainWindow
