@@ -3,6 +3,7 @@ Tonuino-Manager
 Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten.
 """
 
+import logging
 import sys
 import os
 
@@ -29,6 +30,8 @@ from gui.main_window import MainWindow
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
     # High DPI Skalierung aktivieren
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"

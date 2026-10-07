@@ -72,7 +72,7 @@ git clone https://github.com/donschoof/tonuino-manager.git
 cd tonuino-manager
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # nur zum Starten reicht requirements.txt
 python main.py
 ```
 
@@ -94,7 +94,7 @@ python main.py
 
 ### Eigene Builds
 
-Im aktivierten venv:
+Im aktivierten venv (mit `requirements-dev.txt` installiert, enthält PyInstaller):
 
 ```bash
 python build_package.py
@@ -106,10 +106,19 @@ Das Skript erkennt das Betriebssystem und legt das Ergebnis in `dist/` ab. Es mu
 - **Linux**: `Tonuino-Manager` (portabel) und `.deb` (benötigt `dpkg-deb`)
 - **macOS**: `Tonuino-Manager.app` und `.dmg` (`arm64` oder `intel`, je nach Build-Rechner)
 
-CI baut jeden Push/PR auf allen Plattformen und startet die App headless als Smoketest ([build.yml](.github/workflows/build.yml)).
+Tests und Lint lokal:
+
+```bash
+python -m pytest -q
+python -m pyflakes src main.py tests
+```
+
+CI führt Lint und Tests aus, baut jeden Push/PR auf allen Plattformen und startet die App headless als Smoketest ([build.yml](.github/workflows/build.yml)).
 
 ## Lizenz
 
 MIT License
+
+Die Releases enthalten FFmpeg (über [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)). Diese FFmpeg-Builds stehen in der Regel unter der GPL bzw. LGPL – es gelten deren eigene Lizenzbedingungen, nicht die MIT-Lizenz dieses Projekts.
 
 Enthält [Material Icons](https://github.com/google/material-design-icons) (Apache License 2.0, siehe `src/resources/fonts/MaterialIcons-LICENSE.txt`).

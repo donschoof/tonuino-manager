@@ -14,6 +14,7 @@ from PyQt6.QtGui import QFontMetrics, QIcon, QPixmap, QPainter, QPainterPath, QC
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from gui.common import icon_from_glyph
+from gui import theme
 
 
 def _silence_ffmpeg_logging():
@@ -58,7 +59,7 @@ _ICON_VOLUME_OFF = "\ue04f"   # volume_off
 
 
 # Farbe deaktivierter Steuerelemente (muss zu QSlider:disabled/QLabel:disabled in styles.py passen)
-_DISABLED_COLOR = "#45475a"
+_DISABLED_COLOR = theme.SURFACE1
 
 
 def _transport_icon(glyph: str, size: int, main_color: str, hover_color: str) -> QIcon:
@@ -204,9 +205,9 @@ def rounded_cover(source: Optional[QPixmap], size: int, radius: int = 6) -> QPix
         crop.setDevicePixelRatio(scale)
         painter.drawPixmap(0, 0, crop)
     else:
-        painter.fillRect(QRectF(0, 0, size, size), QColor("#313244"))
+        painter.fillRect(QRectF(0, 0, size, size), QColor(theme.SURFACE0))
         painter.setClipping(False)
-        note = icon_from_glyph(_ICON_NOTE, color="#6c7086", size=int(size * 0.6)).pixmap(int(size * 0.6), int(size * 0.6))
+        note = icon_from_glyph(_ICON_NOTE, color=theme.OVERLAY0, size=int(size * 0.6)).pixmap(int(size * 0.6), int(size * 0.6))
         offset = (size - note.width()) // 2
         painter.drawPixmap(offset, offset, note)
     painter.end()
@@ -280,7 +281,7 @@ class AudioPlayerBar(QFrame):
 
         self.btn_prev = QPushButton()
         self.btn_prev.setObjectName("transportButton")
-        self.btn_prev.setIcon(_transport_icon(_ICON_PREV, 30, "#9399b2", "#cdd6f4"))
+        self.btn_prev.setIcon(_transport_icon(_ICON_PREV, 30, theme.OVERLAY2, theme.TEXT))
         self.btn_prev.setIconSize(QSize(30, 30))
         self.btn_prev.setFixedSize(38, 38)
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -291,7 +292,7 @@ class AudioPlayerBar(QFrame):
 
         self.btn_play_pause = QPushButton()
         self.btn_play_pause.setObjectName("transportButton")
-        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, "#cdd6f4", "#ffffff"))
+        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, theme.TEXT, theme.WHITE))
         self.btn_play_pause.setIconSize(QSize(40, 40))
         self.btn_play_pause.setFixedSize(46, 46)
         self.btn_play_pause.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -302,7 +303,7 @@ class AudioPlayerBar(QFrame):
 
         self.btn_next = QPushButton()
         self.btn_next.setObjectName("transportButton")
-        self.btn_next.setIcon(_transport_icon(_ICON_NEXT, 30, "#9399b2", "#cdd6f4"))
+        self.btn_next.setIcon(_transport_icon(_ICON_NEXT, 30, theme.OVERLAY2, theme.TEXT))
         self.btn_next.setIconSize(QSize(30, 30))
         self.btn_next.setFixedSize(38, 38)
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -440,7 +441,7 @@ class AudioPlayerBar(QFrame):
         QCoreApplication.processEvents()
         self._current_path = None
         self._show_track_info(None, "Kein Track ausgewählt")
-        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, "#cdd6f4", "#ffffff"))
+        self.btn_play_pause.setIcon(_transport_icon(_ICON_PLAY, 40, theme.TEXT, theme.WHITE))
         self._update_play_enabled()
         self._set_loaded_state(False)
         self.seek_slider.setRange(0, 0)
@@ -511,7 +512,7 @@ class AudioPlayerBar(QFrame):
 
     def _on_playback_state_changed(self, state):
         glyph = _ICON_PAUSE if state == QMediaPlayer.PlaybackState.PlayingState else _ICON_PLAY
-        self.btn_play_pause.setIcon(_transport_icon(glyph, 40, "#cdd6f4", "#ffffff"))
+        self.btn_play_pause.setIcon(_transport_icon(glyph, 40, theme.TEXT, theme.WHITE))
         self.playback_changed.emit()
 
     def _on_position_changed(self, position: int):
@@ -557,12 +558,12 @@ class AudioPlayerBar(QFrame):
         silent = self._muted or value == 0
 
         if silent:
-            glyph, main_color = _ICON_VOLUME_OFF, "#585b70"
+            glyph, main_color = _ICON_VOLUME_OFF, theme.SURFACE2
         elif value < 50:
-            glyph, main_color = _ICON_VOLUME_DOWN, "#9399b2"
+            glyph, main_color = _ICON_VOLUME_DOWN, theme.OVERLAY2
         else:
-            glyph, main_color = _ICON_VOLUME_UP, "#9399b2"
-        self.btn_mute.setIcon(_transport_icon(glyph, 30, main_color, "#cdd6f4"))
+            glyph, main_color = _ICON_VOLUME_UP, theme.OVERLAY2
+        self.btn_mute.setIcon(_transport_icon(glyph, 30, main_color, theme.TEXT))
         self.btn_mute.setToolTip("Stummschaltung aufheben" if silent else "Stumm schalten")
 
         # Slider im Stumm-Zustand abgedunkelt (QSlider#volumeSlider[muted="true"])

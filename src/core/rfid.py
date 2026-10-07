@@ -3,12 +3,18 @@ RFID-Karten-Verwaltung fuer Tonuino
 Unterstuetzt ACR122U NFC/RFID-Lesegeraet
 """
 
+import importlib.util
+import logging
 import functools
 import threading
 import time
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
+
+from core import pmodes
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,11 +43,11 @@ class TonuinoCardData:
 # pmode_t) - von beiden Programmierwegen (ACR122U-Leser und TonUINO-seriell)
 # gemeinsam genutzt, damit sie nicht auseinanderlaufen.
 PLAYBACK_MODES = [
-    ("Hörspiel (zufällige Wiedergabe, kein Fortschritt)", 1),
-    ("Album (alle Tracks der Reihe nach)", 2),
-    ("Party (alle Tracks in zufälliger Reihenfolge)", 3),
-    ("Einzelner Track", 4),
-    ("Hörbuch (Fortschritt wird gespeichert)", 5),
+    ("Hörspiel (zufällige Wiedergabe, kein Fortschritt)", pmodes.PMODE_HOERSPIEL),
+    ("Album (alle Tracks der Reihe nach)", pmodes.PMODE_ALBUM),
+    ("Party (alle Tracks in zufälliger Reihenfolge)", pmodes.PMODE_PARTY),
+    ("Einzelner Track", pmodes.PMODE_EINZEL),
+    ("Hörbuch (Fortschritt wird gespeichert)", pmodes.PMODE_HOERBUCH),
 ]
 
 
@@ -101,11 +107,7 @@ class RFIDReader:
     
     def _check_scard(self) -> bool:
         """Prueft ob pyscard verfuegbar ist"""
-        try:
-            import smartcard
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("smartcard") is not None
     
     @property
     def is_available(self) -> bool:
@@ -175,12 +177,12 @@ class RFIDReader:
                     except Exception:
                         self._reader_available = True
                         return True
-                print(f"Verbindungsfehler: {e}")
+                log.warning(f"Verbindungsfehler: {e}")
                 self._reader_available = False
                 return False
             
         except Exception as e:
-            print(f"Verbindungsfehler: {e}")
+            log.warning(f"Verbindungsfehler: {e}")
             self._reader_available = False
             return False
     
@@ -310,8 +312,6 @@ class RFIDReader:
             return None
         
         try:
-            from smartcard.util import toHexString
-            
             response, sw1, sw2 = self._transmit(self.CMD_GET_UID)
             
             if sw1 == 0x90 and sw2 == 0x00:
@@ -322,7 +322,7 @@ class RFIDReader:
             return None
             
         except Exception as e:
-            print(f"Fehler beim Lesen der UID: {e}")
+            log.warning(f"Fehler beim Lesen der UID: {e}")
             return None
     
     def get_card_atr(self) -> Optional[str]:
@@ -393,7 +393,7 @@ class RFIDReader:
             return None
             
         except Exception as e:
-            print(f"Fehler beim Lesen von Block {block}: {e}")
+            log.warning(f"Fehler beim Lesen von Block {block}: {e}")
             return None
     
     def write_block(self, block: int, data: bytes, key: List[int] = None) -> bool:
@@ -415,7 +415,7 @@ class RFIDReader:
             return sw1 == 0x90 and sw2 == 0x00
             
         except Exception as e:
-            print(f"Fehler beim Schreiben von Block {block}: {e}")
+            log.warning(f"Fehler beim Schreiben von Block {block}: {e}")
             return False
     
     KEY_TYPE_A = 0x60
@@ -439,7 +439,7 @@ class RFIDReader:
             return sw1 == 0x90 and sw2 == 0x00
 
         except Exception as e:
-            print(f"Authentifizierungsfehler: {e}")
+            log.warning(f"Authentifizierungsfehler: {e}")
             return False
 
     def _write_ntag_page(self, page: int, data: List[int]) -> bool:
@@ -461,11 +461,11 @@ class RFIDReader:
             if sw1 == 0x90 and sw2 == 0x00:
                 return True
 
-            print(f"Ultralight/NTAG Write auf Page {page} fehlgeschlagen: SW1={hex(sw1)}, SW2={hex(sw2)}")
+            log.warning(f"Ultralight/NTAG Write auf Page {page} fehlgeschlagen: SW1={hex(sw1)}, SW2={hex(sw2)}")
             return False
 
         except Exception as e:
-            print(f"Fehler beim Schreiben der Page {page}: {e}")
+            log.warning(f"Fehler beim Schreiben der Page {page}: {e}")
             return False
 
     def _read_ntag_page(self, page: int) -> Optional[List[int]]:
@@ -519,7 +519,7 @@ class RFIDReader:
     # Eine Admin-Karte ist keinem Ordner zugeordnet (folder=0) und traegt den
     # reservierten Mode-Wert admin_card=0xFF (siehe chip_card.hpp: pmode_t), statt
     # eines der regulaeren Wiedergabemodi 1-5.
-    ADMIN_CARD_MODE = 0xFF
+    ADMIN_CARD_MODE = pmodes.PMODE_ADMIN_CARD
 
     def _build_tonuino_block(self, folder_index: int, mode: int, special: int, special2: int) -> bytes:
         # 4 (Cookie) + 5 (Version/Folder/Mode/Special/Special2) + 7 (Padding) = 16 Bytes
@@ -551,7 +551,7 @@ class RFIDReader:
             return self._write_ultralight_block(self.TONUINO_ULTRALIGHT_START_PAGE, block_data)
 
         except Exception as e:
-            print(f"Fehler beim Schreiben der Tonuino-Karte: {e}")
+            log.warning(f"Fehler beim Schreiben der Tonuino-Karte: {e}")
             return False
 
     @_locked
@@ -615,6 +615,6 @@ class RFIDReader:
             return None
 
         except Exception as e:
-            print(f"Fehler beim Lesen der Tonuino-Karte: {e}")
+            log.warning(f"Fehler beim Lesen der Tonuino-Karte: {e}")
             return None
     

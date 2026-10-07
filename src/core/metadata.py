@@ -5,7 +5,11 @@ Liest und schreibt ID3-Tags und Cover-Art
 
 from typing import Optional, Tuple
 from dataclasses import dataclass
+import importlib.util
+import logging
 import time
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,11 +36,7 @@ class MetadataManager:
     
     def _check_mutagen(self) -> bool:
         """Prueft ob mutagen verfuegbar ist"""
-        try:
-            import mutagen
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("mutagen") is not None
 
     @staticmethod
     def _open_mp3(filepath: str, attempts: int = 4, delay: float = 0.15):
@@ -106,7 +106,7 @@ class MetadataManager:
                         break
 
         except Exception as e:
-            print(f"Fehler beim Lesen der Metadaten: {e}")
+            log.warning(f"Fehler beim Lesen der Metadaten: {e}")
 
         return metadata, cover_bytes
 
@@ -165,7 +165,7 @@ class MetadataManager:
             return True
 
         except Exception as e:
-            print(f"Fehler beim Schreiben der Metadaten: {e}")
+            log.warning(f"Fehler beim Schreiben der Metadaten: {e}")
             return False
 
     def get_cover_bytes(self, filepath: str) -> Optional[bytes]:
@@ -184,7 +184,7 @@ class MetadataManager:
             return None
 
         except Exception as e:
-            print(f"Fehler beim Lesen des Covers: {e}")
+            log.warning(f"Fehler beim Lesen des Covers: {e}")
             return None
 
     def set_cover(self, filepath: str, cover_path: str) -> bool:
@@ -221,6 +221,6 @@ class MetadataManager:
             return True
             
         except Exception as e:
-            print(f"Fehler beim Setzen des Covers: {e}")
+            log.warning(f"Fehler beim Setzen des Covers: {e}")
             return False
     

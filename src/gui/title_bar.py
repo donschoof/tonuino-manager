@@ -11,8 +11,9 @@ Groesse aendern und Einrasten uebernimmt Windows selbst ueber WM_NCHITTEST
 from PyQt6.QtCore import Qt, QSize, QPointF, QPoint
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QMenuBar, QToolButton
+from gui import theme
 
-ICON_COLOR = "#cdd6f4"
+ICON_COLOR = theme.TEXT
 BUTTON_SIZE = QSize(46, 32)
 
 

@@ -30,10 +30,13 @@ gemeldet wird; laeuft kein Schreibvorgang, antwortet die Firmware sofort mit
 "WRITECARD: kein Schreibvorgang aktiv, nichts abzubrechen".
 """
 
+import importlib.util
 import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+from core import pmodes
 
 
 class TonuinoSerialError(Exception):
@@ -78,31 +81,24 @@ class TonuinoSerial:
     GROUP_MODE_FOLDER_SPECIAL = GROUP_MODE_FOLDER_SPECIAL
     GROUP_MODE_FOLDER_SPECIAL_SPECIAL2 = GROUP_MODE_FOLDER_SPECIAL_SPECIAL2
 
-    # pmode_t-Werte aus TonUINO-TNG/src/chip_card.hpp
-    PMODE_HOERSPIEL = 1
-    PMODE_ALBUM = 2
-    PMODE_PARTY = 3
-    PMODE_EINZEL = 4
-    PMODE_HOERBUCH = 5
-    # "Admin" (6) ist nur ein Menue-Auswahlwert: waehlt man ihn im normalen
-    # Menuepfad "Neue Karte anlegen" -> Modus, ersetzt die Firmware ihn dort
-    # sofort durch PMODE_ADMIN_CARD und setzt folder=0 (state_machine.cpp,
-    # ChMode::react()). Der WRITECARD-Serial-Befehl durchlaeuft dieses Menue
-    # nicht und macht diese Ersetzung NICHT - fuer echte Admin-Karten muss
-    # daher direkt PMODE_ADMIN_CARD gesendet werden, sonst landet der rohe
-    # Wert 6 auf der Karte und sie wird nicht als Admin-Karte erkannt.
-    PMODE_ADMIN = 6
-    PMODE_ADMIN_CARD = 0xFF  # pmode_t::admin_card aus chip_card.hpp
-    PMODE_HOERSPIEL_VB = 7
-    PMODE_ALBUM_VB = 8
-    PMODE_PARTY_VB = 9
-    PMODE_HOERBUCH_1 = 10
-    PMODE_REPEAT_LAST = 11
-    PMODE_QUIZ_GAME = 12
-    PMODE_MEMORY_GAME = 13
-    PMODE_SWITCH_BT = 14
-    PMODE_TEAPOT_GAME = 15
-    PMODE_HOERBUCH_VB = 16
+    # pmode_t-Werte (siehe core/pmodes.py), als Klassenattribute verfuegbar
+    PMODE_HOERSPIEL = pmodes.PMODE_HOERSPIEL
+    PMODE_ALBUM = pmodes.PMODE_ALBUM
+    PMODE_PARTY = pmodes.PMODE_PARTY
+    PMODE_EINZEL = pmodes.PMODE_EINZEL
+    PMODE_HOERBUCH = pmodes.PMODE_HOERBUCH
+    PMODE_ADMIN = pmodes.PMODE_ADMIN
+    PMODE_ADMIN_CARD = pmodes.PMODE_ADMIN_CARD
+    PMODE_HOERSPIEL_VB = pmodes.PMODE_HOERSPIEL_VB
+    PMODE_ALBUM_VB = pmodes.PMODE_ALBUM_VB
+    PMODE_PARTY_VB = pmodes.PMODE_PARTY_VB
+    PMODE_HOERBUCH_1 = pmodes.PMODE_HOERBUCH_1
+    PMODE_REPEAT_LAST = pmodes.PMODE_REPEAT_LAST
+    PMODE_QUIZ_GAME = pmodes.PMODE_QUIZ_GAME
+    PMODE_MEMORY_GAME = pmodes.PMODE_MEMORY_GAME
+    PMODE_SWITCH_BT = pmodes.PMODE_SWITCH_BT
+    PMODE_TEAPOT_GAME = pmodes.PMODE_TEAPOT_GAME
+    PMODE_HOERBUCH_VB = pmodes.PMODE_HOERBUCH_VB
 
     # Single Source of Truth fuer alle 16 WRITECARD-Modi (Label + benoetigte
     # Parameter), siehe TonUINO-TNG/src/constants.hpp fuer die Modustabelle.
@@ -135,11 +131,7 @@ class TonuinoSerial:
 
     @staticmethod
     def serial_available() -> bool:
-        try:
-            import serial  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("serial") is not None
 
     @staticmethod
     def list_ports() -> List[SerialPortInfo]:

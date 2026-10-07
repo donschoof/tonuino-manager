@@ -16,7 +16,7 @@ if errorlevel 1 (
 
 echo.
 echo Installiere Abhaengigkeiten...
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 if errorlevel 1 (
     echo FEHLER bei der Installation!
     pause

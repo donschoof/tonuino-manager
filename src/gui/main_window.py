@@ -31,6 +31,7 @@ from gui.cover_edit import CoverEditWidget
 from gui.rfid_panel import RfidPanel
 from gui.update_controller import UpdateController
 from gui.title_bar import TitleBar
+from gui import theme
 
 
 class MainWindow(QMainWindow):
@@ -244,7 +245,7 @@ class MainWindow(QMainWindow):
 
         version_label = QLabel(f"Version {__version__}")
         # padding-left entspricht dem Padding von #sidebarTitle, damit beide bündig sind
-        version_label.setStyleSheet("color: #6c7086; font-size: 10px; padding-left: 15px;")
+        version_label.setStyleSheet(f"color: {theme.OVERLAY0}; font-size: 10px; padding-left: 15px;")
 
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
@@ -253,7 +254,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("padding-top: 0px; padding-bottom: 0px;")
         title.setFixedHeight(title.sizeHint().height() - 2)
         version_label.setStyleSheet(
-            "color: #6c7086; font-size: 10px; padding-left: 15px; padding-top: 0px;"
+            f"color: {theme.OVERLAY0}; font-size: 10px; padding-left: 15px; padding-top: 0px;"
         )
         title_col.addWidget(title)
         title_col.addWidget(version_label)
@@ -370,7 +371,7 @@ class MainWindow(QMainWindow):
 
         btn_add_tracks = QPushButton(" Tracks hinzufügen")
         btn_add_tracks.setObjectName("primaryButton")
-        btn_add_tracks.setIcon(icon_from_glyph("\ue145", color="#1e1e2e"))  # Add
+        btn_add_tracks.setIcon(icon_from_glyph("\ue145", color=theme.BASE))  # Add
         btn_add_tracks.setFixedHeight(38)
         btn_add_tracks.setMinimumWidth(170)
         btn_add_tracks.clicked.connect(self._add_tracks)
@@ -379,7 +380,7 @@ class MainWindow(QMainWindow):
 
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("dangerButton")
-        btn_delete_folder.setIcon(icon_from_glyph("\ue872", color="#1e1e2e"))  # Delete
+        btn_delete_folder.setIcon(icon_from_glyph("\ue872", color=theme.BASE))  # Delete
         btn_delete_folder.setFixedHeight(38)
         btn_delete_folder.setMinimumWidth(170)
         btn_delete_folder.clicked.connect(self._delete_folder)
@@ -397,7 +398,7 @@ class MainWindow(QMainWindow):
         track_header_layout.addStretch()
 
         self.btn_multi_select = QPushButton(" Auswählen")
-        self.btn_multi_select.setIcon(icon_from_glyph("\ue877", color="#cdd6f4"))  # Done all
+        self.btn_multi_select.setIcon(icon_from_glyph("\ue877", color=theme.TEXT))  # Done all
         self.btn_multi_select.setCheckable(True)
         self.btn_multi_select.setToolTip("Mehrfachauswahl ein-/ausschalten")
         self.btn_multi_select.setEnabled(False)
@@ -405,14 +406,14 @@ class MainWindow(QMainWindow):
         track_header_layout.addWidget(self.btn_multi_select)
 
         self.btn_move_track_up = QPushButton()
-        self.btn_move_track_up.setIcon(icon_from_glyph("", color="#cdd6f4"))  # Up
+        self.btn_move_track_up.setIcon(icon_from_glyph("", color=theme.TEXT))  # Up
         self.btn_move_track_up.setToolTip("Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
         self.btn_move_track_up.clicked.connect(lambda: self._move_selected_tracks(-1))
         track_header_layout.addWidget(self.btn_move_track_up)
 
         self.btn_move_track_down = QPushButton()
-        self.btn_move_track_down.setIcon(icon_from_glyph("", color="#cdd6f4"))  # Down
+        self.btn_move_track_down.setIcon(icon_from_glyph("", color=theme.TEXT))  # Down
         self.btn_move_track_down.setToolTip("Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
         self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
@@ -420,7 +421,7 @@ class MainWindow(QMainWindow):
 
         self.btn_delete_tracks = QPushButton(" Track löschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
-        self.btn_delete_tracks.setIcon(icon_from_glyph("", color="#1e1e2e"))  # Delete
+        self.btn_delete_tracks.setIcon(icon_from_glyph("", color=theme.BASE))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
@@ -1256,7 +1257,7 @@ class MainWindow(QMainWindow):
         self.btn_multi_select.setText(" Fertig" if enabled else " Auswählen")
         # dunkles Icon auf dem blauen (eingeschalteten) Button, sonst hell
         self.btn_multi_select.setIcon(
-            icon_from_glyph("", color="#1e1e2e" if enabled else "#cdd6f4")  # Done all
+            icon_from_glyph("", color=theme.BASE if enabled else theme.TEXT)  # Done all
         )
 
         self.track_list.blockSignals(True)
@@ -1359,7 +1360,7 @@ class MainWindow(QMainWindow):
                 pixmap.fill(Qt.GlobalColor.transparent)
                 self._row_icons[kind] = QIcon(pixmap)
             else:
-                self._row_icons[kind] = icon_from_glyph(glyphs[kind], color="#89b4fa", size=18)
+                self._row_icons[kind] = icon_from_glyph(glyphs[kind], color=theme.BLUE, size=18)
         return self._row_icons[kind]
 
     def _refresh_track_row_icons(self):
