@@ -3,372 +3,34 @@ Hauptfenster des Tonuino-Managers
 """
 
 import os
-import shutil
-import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QListWidget, QListWidgetItem,
+    QPushButton, QLabel, QListWidgetItem, QListWidget,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QSplitter, QInputDialog,
-    QAbstractItemView, QProgressDialog, QApplication,
-    QComboBox, QMenuBar, QStyle, QStyleOptionViewItem
+    QStatusBar, QSplitter,
+    QAbstractItemView, QProgressDialog,
+    QMenuBar, QStyle, QStyleOptionViewItem
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QEvent, QPoint, QRect
-from PyQt6.QtGui import QCursor, QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect
+from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup
 
 from core import __version__
 from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
-from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES
-from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
-from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
+from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph
+from gui.track_list import HoverListWidget, reorder_with_selection
+from gui.workers import (
+    SDCardScanner, TrackAddWorker, FolderNameWorker, TrackMetaWorker, PurgeWorker,
+)
 from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
 from gui.cover_edit import CoverEditWidget
-from gui.update_dialog import UpdateDialog
+from gui.rfid_panel import RfidPanel
+from gui.update_controller import UpdateController
 from gui.title_bar import TitleBar
-
-
-def resource_path(*parts) -> str:
-    """Ermittelt einen Pfad relativ zum src-Verzeichnis - funktioniert sowohl im
-    Skript- als auch im PyInstaller-EXE-Modus (siehe auch main.py).
-    Im (onefile-)EXE-Modus liegen gebuendelte Daten unter sys._MEIPASS, nicht
-    neben der EXE-Datei."""
-    if getattr(sys, 'frozen', False):
-        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-        src_dir = os.path.join(base_dir, 'src')
-    else:
-        src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(src_dir, *parts)
-
-
-def heading_font(point_size: int) -> QFont:
-    """Fette Ueberschriften-Schriftart. 'Segoe UI' wird nur unter Windows
-    explizit gesetzt (dort das native Default) - unter macOS/Linux existiert
-    diese Schriftart nicht, ein fest codierter Name fuehrt dort zu einer
-    Qt-Log-Warnung ("Populating font family aliases... Replace uses of
-    missing font family") und einem uneinheitlichen Fallback-Rendering.
-    Ohne explizite Familie verwendet Qt dort automatisch die native
-    System-Schriftart (San Francisco bzw. die Desktop-Standardschrift)."""
-    font = QFont("Segoe UI") if sys.platform == "win32" else QFont()
-    font.setPointSize(point_size)
-    font.setWeight(QFont.Weight.Bold)
-    return font
-
-
-def confirm_action(parent, title: str, text: str, default_no: bool = True) -> bool:
-    """Zeigt einen Ja/Nein-Bestaetigungsdialog mit deutschen Buttons.
-    Qt uebersetzt die Standard-Yes/No-Buttons von QMessageBox.question() nicht
-    automatisch ins Deutsche (haengt von geladenen Qt-Uebersetzungsdateien ab),
-    daher werden hier explizit deutsch beschriftete Buttons verwendet."""
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Question)
-    box.setWindowTitle(title)
-    box.setText(text)
-    btn_yes = box.addButton("Ja", QMessageBox.ButtonRole.YesRole)
-    btn_no = box.addButton("Nein", QMessageBox.ButtonRole.NoRole)
-    box.setDefaultButton(btn_no if default_no else btn_yes)
-    box.exec()
-    return box.clickedButton() == btn_yes
-
-
-class ClickableLabel(QLabel):
-    """QLabel, das per Klick ein Signal auslöst (fuer das Cover-Bild als In-Place-Button)"""
-    clicked = pyqtSignal()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-class HoverListWidget(QListWidget):
-    """QListWidget, das meldet, ueber welcher Zeile die Maus steht (-1 = keine).
-    Dient den Abspielen-Symbolen der Track-Liste, die beim Ueberfahren erscheinen."""
-    hovered_row_changed = pyqtSignal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMouseTracking(True)
-        self._hover_row = -1
-        # Position des letzten Mausklicks (Viewport-Koordinaten): itemClicked
-        # liefert sie nicht mit, wird aber fuer die Klick-Zone der Symbole gebraucht
-        self.last_press_pos = QPoint()
-
-    def _set_hover_row(self, row: int):
-        if row != self._hover_row:
-            self._hover_row = row
-            self.hovered_row_changed.emit(row)
-
-    def mouseMoveEvent(self, event):
-        self._set_hover_row(self.indexAt(event.position().toPoint()).row())
-        super().mouseMoveEvent(event)
-
-    def mousePressEvent(self, event):
-        self.last_press_pos = event.position().toPoint()
-        super().mousePressEvent(event)
-
-    def leaveEvent(self, event):
-        self._set_hover_row(-1)
-        super().leaveEvent(event)
-
-
-class SDCardScanner(QThread):
-    """Thread fuer das Scannen der SD-Karte"""
-    completed = pyqtSignal(bool)
-    progress = pyqtSignal(int)
-    
-    def __init__(self, sd_card: SDCard):
-        super().__init__()
-        self.sd_card = sd_card
-    
-    def run(self):
-        try:
-            self.progress.emit(10)
-            # Kurze Pause um Signal zu verarbeiten
-            self.msleep(50)
-            success = self.sd_card.scan()
-            self.progress.emit(100)
-            self.completed.emit(success)
-        except Exception as e:
-            print(f"Scan-Fehler: {e}")
-            import traceback
-            traceback.print_exc()
-            self.completed.emit(False)
-
-
-class TrackAddWorker(QThread):
-    """Thread zum Hinzufuegen (Kopieren/Konvertieren) von Tracks, damit die
-    UI waehrend FFmpeg-Konvertierung/Datei-I/O nicht einfriert."""
-    progress = pyqtSignal(int, int, str)  # aktueller Index, Gesamtzahl, Dateiname
-    track_added = pyqtSignal(object)  # neuer Track
-    error = pyqtSignal(str, str)  # Dateiname, Fehlermeldung
-    completed = pyqtSignal(int)  # Anzahl erfolgreich hinzugefuegter Tracks
-
-    def __init__(self, folder: Folder, filepaths: list,
-                 audio_converter: AudioConverter, metadata_manager: MetadataManager):
-        super().__init__()
-        self.folder = folder
-        self.filepaths = filepaths
-        self.audio_converter = audio_converter
-        self.metadata_manager = metadata_manager
-        self._cancelled = False
-        # Bereits belegte Tracknummern werden hier fortlaufend gefuehrt, da die
-        # eigentliche Ordnerliste (folder.tracks) erst im GUI-Thread aktualisiert wird
-        self._used_numbers = {t.index for t in folder.tracks}
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        added = 0
-        for i, filepath in enumerate(self.filepaths, start=1):
-            if self._cancelled:
-                break
-
-            self.progress.emit(i, len(self.filepaths), os.path.basename(filepath))
-
-            next_number = 1
-            while next_number in self._used_numbers:
-                next_number += 1
-            if next_number > MAX_TRACKS_PER_FOLDER:
-                break
-
-            dest_filename = f"{next_number:03d}.mp3"
-            dest_path = Path(self.folder.path) / dest_filename
-
-            try:
-                if self.audio_converter.needs_conversion(filepath):
-                    if not self.audio_converter.is_available:
-                        self.error.emit(os.path.basename(filepath), "FFmpeg ist nicht verfügbar.")
-                        continue
-                    self.audio_converter.convert_to_mp3(filepath, str(dest_path))
-                else:
-                    shutil.copy2(filepath, dest_path)
-
-                # Tags stehen jetzt in der Zieldatei (bei Konvertierung von FFmpeg
-                # uebernommen, bei MP3 mitkopiert) - dort lesen statt in der Quelle,
-                # die ggf. kein MP3 ist und von mutagen.mp3 nicht gelesen werden kann.
-                metadata = self.metadata_manager.read_metadata(str(dest_path))
-                if metadata.title:
-                    self.metadata_manager.write_metadata(str(dest_path), track_number=next_number)
-
-                new_track = Track(
-                    index=next_number,
-                    filename=dest_filename,
-                    filepath=str(dest_path),
-                    title=metadata.title
-                )
-                self._used_numbers.add(next_number)
-                self.track_added.emit(new_track)
-                added += 1
-
-            except Exception as e:
-                self.error.emit(os.path.basename(filepath), str(e))
-
-        self.completed.emit(added)
-
-
-class RfidPoller(QThread):
-    """Fragt Reader- und Kartenstatus regelmaessig im Hintergrund ab - die
-    PC/SC-Aufrufe (Transmit, Reconnect) koennen sonst den GUI-Thread
-    spuerbar blockieren."""
-    status_changed = pyqtSignal(object)  # RfidStatus
-
-    def __init__(self, reader: RFIDReader, interval_ms: int = 500):
-        super().__init__()
-        self.reader = reader
-        self.interval_ms = interval_ms
-        self.paused = False  # z.B. im TonUINO-seriell-Modus
-        self._stopped = False
-
-    def stop(self):
-        self._stopped = True
-
-    def run(self):
-        while not self._stopped:
-            if not self.paused:
-                try:
-                    self.status_changed.emit(self.reader.poll())
-                except Exception as e:
-                    self.status_changed.emit(RfidStatus(reader="error", error=str(e)))
-            self.msleep(self.interval_ms)
-
-
-class TonuinoConnectWorker(QThread):
-    """Oeffnet die serielle Verbindung zum TonUINO - der Arduino resettet dabei
-    und die Verbindung wartet ca. 2 s, was im GUI-Thread die Oberflaeche einfriert."""
-    completed = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung
-
-    def __init__(self, tonuino: TonuinoSerial, port: str):
-        super().__init__()
-        self.tonuino = tonuino
-        self.port = port
-
-    def run(self):
-        try:
-            self.tonuino.connect(self.port)
-            self.completed.emit(True, "")
-        except TonuinoSerialError as e:
-            self.completed.emit(False, str(e))
-        except Exception as e:
-            self.completed.emit(False, f"Unerwarteter Fehler: {e}")
-
-
-class FolderNameWorker(QThread):
-    """Ermittelt die Ordnernamen (Album-Tag des ersten getaggten Tracks) im
-    Hintergrund - auf einer SD-Karte mit vielen untaggten Ordnern waeren das
-    sonst tausende Dateizugriffe im GUI-Thread direkt nach dem Oeffnen."""
-    name_found = pyqtSignal(int, str)  # Ordnernummer, Name
-    completed = pyqtSignal()
-
-    def __init__(self, folders: list, metadata_manager: MetadataManager):
-        super().__init__()
-        self.folders = folders
-        self.metadata_manager = metadata_manager
-        self._cancelled = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        for folder in self.folders:
-            for track in sorted(folder.tracks, key=lambda t: t.index):
-                if self._cancelled:
-                    return
-                album = self.metadata_manager.read_metadata(track.filepath).album
-                if album:
-                    self.name_found.emit(folder.index, album)
-                    break
-        self.completed.emit()
-
-
-class TrackMetaWorker(QThread):
-    """Liest die Metadaten der Tracks eines Ordners genau einmal pro Datei
-    (Tags, Dauer und - nur vom ersten Track mit Cover - das Cover)."""
-    track_loaded = pyqtSignal(int, int, object, object)  # Generation, Zeile, TrackMetadata, Cover-Bytes|None
-    completed = pyqtSignal(int)  # Generation
-
-    def __init__(self, generation: int, tracks: list, metadata_manager: MetadataManager):
-        super().__init__()
-        self.generation = generation
-        self.tracks = tracks
-        self.metadata_manager = metadata_manager
-        self._cancelled = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        cover_sent = False
-        for row, track in enumerate(self.tracks):
-            if self._cancelled:
-                return
-            metadata, cover = self.metadata_manager.read_metadata_and_cover(track.filepath)
-            if cover_sent:
-                cover = None
-            elif cover:
-                cover_sent = True
-            self.track_loaded.emit(self.generation, row, metadata, cover)
-        self.completed.emit(self.generation)
-
-
-class PurgeWorker(QThread):
-    """Thread fuer das Bereinigen der SD-Karte (Whitelist-Purge), damit die
-    UI waehrend der Dateisystem-Operationen nicht einfriert."""
-    completed = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung (leer bei Erfolg)
-
-    def __init__(self, sd_card: SDCard):
-        super().__init__()
-        self.sd_card = sd_card
-
-    def run(self):
-        try:
-            self.sd_card.purge()
-            self.completed.emit(True, "")
-        except Exception as e:
-            self.completed.emit(False, str(e))
-
-
-TONUINO_IDLE_HINT = (
-    "\n\nHinweis: Der TonUINO muss dafür im Leerlauf (IDLE) oder in Pause sein "
-    "- nicht während der Wiedergabe."
-)
-
-
-class TonuinoCardWorker(QThread):
-    """Fuehrt eine Karten-Programmierung ueber den seriell verbundenen TonUINO aus
-    (WRITECARD-Befehl), damit die UI waehrend der - potenziell langen, da die
-    Firmware ohne eigenes Timeout auf das Auflegen der Karte wartet - Antwort
-    nicht einfriert."""
-    completed = pyqtSignal(bool, str)  # Erfolg, Meldungstext (Firmware-Text bzw. Fehler)
-
-    def __init__(self, tonuino: TonuinoSerial, mode: int,
-                 folder: Optional[int] = None, special: Optional[int] = None,
-                 special2: Optional[int] = None):
-        super().__init__()
-        self.tonuino = tonuino
-        self.mode = mode
-        self.folder = folder
-        self.special = special
-        self.special2 = special2
-
-    def run(self):
-        try:
-            message = self.tonuino.write_card(
-                self.mode, folder=self.folder, special=self.special, special2=self.special2
-            )
-            self.completed.emit(True, message)
-        except TonuinoWriteCancelled as e:
-            self.completed.emit(False, str(e))
-        except (TonuinoSerialError, ValueError) as e:
-            self.completed.emit(False, str(e))
-        except Exception as e:
-            self.completed.emit(False, f"Unerwarteter Fehler: {e}")
 
 
 class MainWindow(QMainWindow):
@@ -405,16 +67,9 @@ class MainWindow(QMainWindow):
         self.sd_card: SDCard = None
         self.audio_converter = AudioConverter()
         self.metadata_manager = MetadataManager()
-        self.rfid_reader = RFIDReader()
-        self.tonuino_serial = TonuinoSerial()
-        self._reader_mode = self.READER_MODE_ACR122U
-        self._tonuino_worker: TonuinoCardWorker = None
-        self._tonuino_connect_worker: TonuinoConnectWorker = None
         self.scanner: SDCardScanner = None
         self._add_tracks_worker: TrackAddWorker = None
         self._purge_worker: PurgeWorker = None
-        self._update_checker: UpdateChecker = None
-        self._update_downloader: UpdateDownloader = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
         self._folder_name_labels = {}  # folder_index -> Namens-Label in der Ordnerliste
@@ -422,20 +77,13 @@ class MainWindow(QMainWindow):
         self._track_meta_worker: TrackMetaWorker = None
         self._track_meta_generation = 0
         self._track_meta_total = 0.0
-        self._rfid_poller: RfidPoller = None
-        self._last_rfid_status: RfidStatus = None
-        self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
-        self._rfid_card_programmed = False  # fuer die Freischaltung des Loeschen-Icons
+
+        self.update_controller = UpdateController(self)
 
         self._setup_ui()
         self._setup_statusbar()
         self._check_dependencies()
         
-        # Regelmaessige Reader-/Kartenpruefung im Hintergrund-Thread
-        self._rfid_poller = RfidPoller(self.rfid_reader)
-        self._rfid_poller.status_changed.connect(self._apply_rfid_status)
-        self._rfid_poller.start()
-
         # SD-Karten-Timer: erkennt, wenn die geoeffnete SD-Karte (z.B. per
         # USB/Kartenleser) waehrend der Nutzung entfernt wird, und setzt die
         # UI dann sauber zurueck statt bei jedem weiteren Zugriff auf die
@@ -446,7 +94,7 @@ class MainWindow(QMainWindow):
 
         # Update-Pruefung beim Start (versetzt, damit sie nicht mit der
         # RFID-Verbindung um Systemressourcen konkurriert)
-        QTimer.singleShot(1500, self._check_for_updates)
+        QTimer.singleShot(1500, self.update_controller.check_on_startup)
 
     def _setup_ui(self):
         """Erstellt die Benutzeroberflaeche"""
@@ -536,7 +184,7 @@ class MainWindow(QMainWindow):
         menu = menu_bar.addMenu("Einstellungen")
 
         action_check_now = menu.addAction("Nach Updates suchen")
-        action_check_now.triggered.connect(self._check_for_updates_manual)
+        action_check_now.triggered.connect(self.update_controller.check_manual)
 
         menu.addSeparator()
 
@@ -544,7 +192,7 @@ class MainWindow(QMainWindow):
         action_auto_check = menu.addAction("Automatisch nach Updates suchen")
         action_auto_check.setCheckable(True)
         action_auto_check.setChecked(auto_check_enabled)
-        action_auto_check.toggled.connect(self._on_auto_check_toggled)
+        action_auto_check.toggled.connect(self.update_controller.on_auto_check_toggled)
 
         menu.addSeparator()
 
@@ -556,14 +204,14 @@ class MainWindow(QMainWindow):
         action_reader_acr122u.setCheckable(True)
         action_reader_acr122u.setChecked(True)  # Default
         action_reader_acr122u.triggered.connect(
-            lambda: self._set_reader_mode(self.READER_MODE_ACR122U)
+            lambda: self.rfid_panel.set_reader_mode(RfidPanel.READER_MODE_ACR122U)
         )
         reader_group.addAction(action_reader_acr122u)
 
         action_reader_tonuino = reader_menu.addAction("TonUINO (seriell)")
         action_reader_tonuino.setCheckable(True)
         action_reader_tonuino.triggered.connect(
-            lambda: self._set_reader_mode(self.READER_MODE_TONUINO)
+            lambda: self.rfid_panel.set_reader_mode(RfidPanel.READER_MODE_TONUINO)
         )
         reader_group.addAction(action_reader_tonuino)
 
@@ -638,147 +286,14 @@ class MainWindow(QMainWindow):
         self.folder_list.itemClicked.connect(self._on_folder_selected)
         layout.addWidget(self.folder_list)
         
-        rfid_frame = QFrame()
-        rfid_frame.setObjectName("cardFrame")
-        rfid_layout = QVBoxLayout(rfid_frame)
-        rfid_layout.setSpacing(10)
-
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
-
-        rfid_title = QLabel("RFID-Karte")
-        rfid_title.setFont(heading_font(10))
-        title_row.addWidget(rfid_title)
-
-        title_row.addStretch()
-
-        self.erase_card_icon = ClickableLabel()
-        self.erase_card_icon.setFixedSize(24, 24)
-        self.erase_card_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.erase_card_icon.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.erase_card_icon.setToolTip("Karten-Daten löschen")
-        self.erase_card_icon.clicked.connect(self._erase_rfid_card)
-        self._set_erase_icon_state(False)
-        title_row.addWidget(self.erase_card_icon)
-
-        rfid_layout.addLayout(title_row)
-
-        self.acr122u_status_widget = QWidget()
-        status_row = QHBoxLayout(self.acr122u_status_widget)
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.setSpacing(8)
-
-        # Einheitliche Icons aus Material Icons (Apache-2.0, gebuendelt) statt
-        # der Windows-exklusiven Segoe Fluent Icons - funktioniert plattformneutral
-        reader_tile, self.reader_icon = self._create_status_tile("", "Reader")
-        status_row.addWidget(reader_tile)
-
-        card_tile, self.card_icon = self._create_status_tile("", "Karte")
-        status_row.addWidget(card_tile)
-
-        programmed_tile, self.programmed_icon = self._create_status_tile("", "Ordner")
-        status_row.addWidget(programmed_tile)
-
-        rfid_layout.addWidget(self.acr122u_status_widget)
-
-        self.tonuino_status_widget = QWidget()
-        tonuino_layout = QVBoxLayout(self.tonuino_status_widget)
-        tonuino_layout.setContentsMargins(0, 0, 0, 0)
-        tonuino_layout.setSpacing(6)
-
-        tonuino_port_row = QHBoxLayout()
-        tonuino_port_row.setSpacing(6)
-        self.tonuino_port_combo = QComboBox()
-        tonuino_port_row.addWidget(self.tonuino_port_combo, 1)
-        btn_tonuino_refresh = QPushButton("Aktualisieren")
-        btn_tonuino_refresh.setToolTip("COM-Ports aktualisieren")
-        btn_tonuino_refresh.clicked.connect(self._refresh_tonuino_ports)
-        tonuino_port_row.addWidget(btn_tonuino_refresh)
-        tonuino_layout.addLayout(tonuino_port_row)
-
-        self.btn_tonuino_connect = QPushButton("Verbinden")
-        self.btn_tonuino_connect.clicked.connect(self._on_tonuino_connect_clicked)
-        tonuino_layout.addWidget(self.btn_tonuino_connect)
-
-        self.tonuino_status_label = QLabel("Nicht verbunden.")
-        self.tonuino_status_label.setWordWrap(True)
-        tonuino_layout.addWidget(self.tonuino_status_label)
-
-        rfid_layout.addWidget(self.tonuino_status_widget)
-        self.tonuino_status_widget.setVisible(False)
-
-        btn_program_card = QPushButton("Karte programmieren")
-        btn_program_card.setObjectName("successButton")
-        btn_program_card.clicked.connect(self._program_rfid_card)
-        btn_program_card.setEnabled(False)
-        self.btn_program_card = btn_program_card
-        rfid_layout.addWidget(btn_program_card)
-
-        btn_program_admin = QPushButton("Admin-Karte programmieren")
-        btn_program_admin.clicked.connect(self._program_admin_card)
-        btn_program_admin.setEnabled(False)
-        self.btn_program_admin = btn_program_admin
-        rfid_layout.addWidget(btn_program_admin)
-
-        btn_tonuino_cancel_write = QPushButton("Programmierung abbrechen")
-        btn_tonuino_cancel_write.clicked.connect(self._on_tonuino_cancel_write_clicked)
-        btn_tonuino_cancel_write.setVisible(False)
-        self.btn_tonuino_cancel_write = btn_tonuino_cancel_write
-        rfid_layout.addWidget(btn_tonuino_cancel_write)
-
-        layout.addWidget(rfid_frame)
+        self.rfid_panel = RfidPanel(
+            get_folder=lambda: self.current_folder,
+            folder_name=self._resolve_folder_name,
+            show_status=lambda message: self.status_bar.showMessage(message),
+        )
+        layout.addWidget(self.rfid_panel)
 
         return sidebar
-
-    def _create_status_tile(self, icon: str, caption: str) -> tuple:
-        """Erstellt eine Status-Kachel: grosses Icon (Farbe je nach Status) + feste Beschriftung.
-        Alle Kacheln erhalten dieselbe feste Icon-Boxgroesse, damit sie unabhaengig
-        vom jeweiligen Glyph exakt gleich gross und ausgerichtet erscheinen.
-        Gibt (Container-Widget, Icon-Label) zurueck."""
-        container = QWidget()
-        col = QVBoxLayout(container)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(2)
-        col.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-
-        icon_label = QLabel(icon)
-        icon_label.setObjectName("statusIcon")
-        icon_label.setProperty("state", "neutral")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setFixedSize(44, 44)
-        col.addWidget(icon_label)
-
-        caption_label = QLabel(caption)
-        caption_label.setObjectName("statusCaption")
-        caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(caption_label)
-
-        return container, icon_label
-
-    def _set_status_icon(self, icon_label: QLabel, state: str):
-        """Setzt die Farbe eines Status-Icons (ok/warning/error/neutral)"""
-        icon_label.setProperty("state", state)
-        icon_label.style().unpolish(icon_label)
-        icon_label.style().polish(icon_label)
-
-    def _icon_from_glyph(self, glyph: str, color: str = "#1e1e2e", size: int = 16) -> QIcon:
-        """Rendert ein Glyph aus der gebuendelten Material-Icons-Schriftart als
-        QIcon, damit es (anders als reiner Text) mit setIcon() auf Buttons
-        benutzt werden kann, ohne die restliche Button-Schrift zu beeinflussen.
-        Material Icons (Apache-2.0) statt der Windows-exklusiven Segoe Fluent
-        Icons, damit die App auch unter macOS/Linux funktioniert."""
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-
-        painter = QPainter(pixmap)
-        font = QFont("Material Icons")
-        font.setPointSize(int(size * 0.65))
-        painter.setFont(font)
-        painter.setPen(QColor(color))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
-        painter.end()
-
-        return QIcon(pixmap)
 
     def _create_main_content(self) -> QWidget:
         """Erstellt den Hauptbereich"""
@@ -855,7 +370,7 @@ class MainWindow(QMainWindow):
 
         btn_add_tracks = QPushButton(" Tracks hinzufügen")
         btn_add_tracks.setObjectName("primaryButton")
-        btn_add_tracks.setIcon(self._icon_from_glyph("\ue145", color="#1e1e2e"))  # Add
+        btn_add_tracks.setIcon(icon_from_glyph("\ue145", color="#1e1e2e"))  # Add
         btn_add_tracks.setFixedHeight(38)
         btn_add_tracks.setMinimumWidth(170)
         btn_add_tracks.clicked.connect(self._add_tracks)
@@ -864,7 +379,7 @@ class MainWindow(QMainWindow):
 
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("dangerButton")
-        btn_delete_folder.setIcon(self._icon_from_glyph("\ue872", color="#1e1e2e"))  # Delete
+        btn_delete_folder.setIcon(icon_from_glyph("\ue872", color="#1e1e2e"))  # Delete
         btn_delete_folder.setFixedHeight(38)
         btn_delete_folder.setMinimumWidth(170)
         btn_delete_folder.clicked.connect(self._delete_folder)
@@ -882,7 +397,7 @@ class MainWindow(QMainWindow):
         track_header_layout.addStretch()
 
         self.btn_multi_select = QPushButton(" Auswählen")
-        self.btn_multi_select.setIcon(self._icon_from_glyph("\ue877", color="#cdd6f4"))  # Done all
+        self.btn_multi_select.setIcon(icon_from_glyph("\ue877", color="#cdd6f4"))  # Done all
         self.btn_multi_select.setCheckable(True)
         self.btn_multi_select.setToolTip("Mehrfachauswahl ein-/ausschalten")
         self.btn_multi_select.setEnabled(False)
@@ -890,14 +405,14 @@ class MainWindow(QMainWindow):
         track_header_layout.addWidget(self.btn_multi_select)
 
         self.btn_move_track_up = QPushButton()
-        self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
+        self.btn_move_track_up.setIcon(icon_from_glyph("", color="#cdd6f4"))  # Up
         self.btn_move_track_up.setToolTip("Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
         self.btn_move_track_up.clicked.connect(lambda: self._move_selected_tracks(-1))
         track_header_layout.addWidget(self.btn_move_track_up)
 
         self.btn_move_track_down = QPushButton()
-        self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
+        self.btn_move_track_down.setIcon(icon_from_glyph("", color="#cdd6f4"))  # Down
         self.btn_move_track_down.setToolTip("Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
         self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
@@ -905,7 +420,7 @@ class MainWindow(QMainWindow):
 
         self.btn_delete_tracks = QPushButton(" Track löschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
-        self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        self.btn_delete_tracks.setIcon(icon_from_glyph("", color="#1e1e2e"))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
@@ -940,7 +455,7 @@ class MainWindow(QMainWindow):
         missing = []
         if not self.audio_converter.is_available:
             missing.append("FFmpeg nicht gefunden - Konvertierung nicht möglich")
-        if not self.rfid_reader.scard_available:
+        if not self.rfid_panel.rfid_reader.scard_available:
             missing.append("pyscard nicht installiert - RFID nicht verfügbar")
         if missing:
             self.status_bar.showMessage(" | ".join(missing))
@@ -1031,7 +546,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.welcome_widget)
         self.btn_new_folder.setEnabled(False)
         self.btn_purge_card.setEnabled(False)
-        self._update_program_buttons()
+        self.rfid_panel.refresh()
         self._update_folder_action_buttons()
 
         self.status_bar.showMessage("SD-Karte wurde entfernt")
@@ -1161,7 +676,7 @@ class MainWindow(QMainWindow):
         if self.current_folder:
             self._show_folder(self.current_folder)
 
-        self._update_program_buttons()
+        self.rfid_panel.refresh()
 
     def _select_folder_in_list(self, folder_index: int):
         """Waehlt einen Ordner in der Sidebar-Liste aus und zeigt ihn im Hauptbereich an
@@ -1319,7 +834,7 @@ class MainWindow(QMainWindow):
         for i in range(1, 100):
             if i not in self.sd_card.folders:
                 try:
-                    folder = self.sd_card.create_folder(i)
+                    self.sd_card.create_folder(i)
                     self._populate_folder_list()
                     self._select_folder_in_list(i)
                     self.status_bar.showMessage(f"Ordner {i:02d} erstellt")
@@ -1469,7 +984,7 @@ class MainWindow(QMainWindow):
         self._folder_name_cache.clear()
         self.stack.setCurrentWidget(self.welcome_widget)
         self._populate_folder_list()
-        self._update_program_buttons()
+        self.rfid_panel.refresh()
         self._update_folder_action_buttons()
         self.btn_purge_card.setEnabled(True)
         self.status_bar.showMessage(
@@ -1502,7 +1017,7 @@ class MainWindow(QMainWindow):
             self.current_folder = None
             self.stack.setCurrentWidget(self.welcome_widget)
             self._populate_folder_list()
-            self._update_program_buttons()
+            self.rfid_panel.refresh()
             self._update_folder_action_buttons()
             self.status_bar.showMessage(f"Ordner {folder.index:02d} gelöscht")
         except Exception as e:
@@ -1741,7 +1256,7 @@ class MainWindow(QMainWindow):
         self.btn_multi_select.setText(" Fertig" if enabled else " Auswählen")
         # dunkles Icon auf dem blauen (eingeschalteten) Button, sonst hell
         self.btn_multi_select.setIcon(
-            self._icon_from_glyph("", color="#1e1e2e" if enabled else "#cdd6f4")  # Done all
+            icon_from_glyph("", color="#1e1e2e" if enabled else "#cdd6f4")  # Done all
         )
 
         self.track_list.blockSignals(True)
@@ -1844,7 +1359,7 @@ class MainWindow(QMainWindow):
                 pixmap.fill(Qt.GlobalColor.transparent)
                 self._row_icons[kind] = QIcon(pixmap)
             else:
-                self._row_icons[kind] = self._icon_from_glyph(glyphs[kind], color="#89b4fa", size=18)
+                self._row_icons[kind] = icon_from_glyph(glyphs[kind], color="#89b4fa", size=18)
         return self._row_icons[kind]
 
     def _refresh_track_row_icons(self):
@@ -1932,33 +1447,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
 
-    @staticmethod
-    def _reorder_with_selection(tracks: list, selected_ids: set, delta: int):
-        """Berechnet die neue Reihenfolge, wenn die markierten Tracks um eine
-        Position nach oben (delta=-1) oder unten (delta=1) verschoben werden.
-        Verstreute Markierungen werden dabei unter Beibehaltung ihrer
-        Reihenfolge zu einem Block zusammengezogen, der am obersten (bzw. beim
-        Verschieben nach unten untersten) markierten Track ansetzt und ueber den
-        naechsten nicht markierten Track springt. Gibt (neue_reihenfolge,
-        zeilen_der_markierten) zurueck."""
-        marked = [i for i, t in enumerate(tracks) if id(t) in selected_ids]
-        block = [tracks[i] for i in marked]
-        rest = [t for t in tracks if id(t) not in selected_ids]
-
-        if delta < 0:
-            anchor = marked[0]  # so viele nicht markierte Tracks stehen davor
-            insert_at = max(anchor - 1, 0)
-        else:
-            anchor = marked[-1] - (len(marked) - 1)
-            insert_at = min(anchor + 1, len(rest))
-
-        new_order = rest[:insert_at] + block + rest[insert_at:]
-        return new_order, list(range(insert_at, insert_at + len(block)))
-
     def _move_selected_tracks(self, delta: int):
         """Verschiebt die ausgewaehlten Tracks um eine Position nach oben
         (delta=-1) oder unten (delta=1) und benennt die Dateien auf der
-        SD-Karte entsprechend fortlaufend um (siehe _reorder_with_selection)."""
+        SD-Karte entsprechend fortlaufend um (siehe reorder_with_selection)."""
         if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
@@ -1966,7 +1458,7 @@ class MainWindow(QMainWindow):
         if not selected:
             return
 
-        new_order, moved_rows = self._reorder_with_selection(
+        new_order, moved_rows = reorder_with_selection(
             list(self.current_folder.tracks), {id(t) for t in selected}, delta
         )
         if new_order == list(self.current_folder.tracks):
@@ -1987,660 +1479,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
 
-    def _set_reader_mode(self, mode: str):
-        """Schaltet zwischen den beiden Programmierwegen um (ACR122U-Leser vs.
-        seriell ueber den TonUINO selbst) - ausgewaehlt ueber das Menue Einstellungen
-        (RFID-Leser), beide teilen sich denselben Bereich in der Sidebar."""
-        self._reader_mode = mode
-        is_tonuino = mode == self.READER_MODE_TONUINO
-        self._rfid_poller.paused = is_tonuino
-        self._last_rfid_status = None  # beim Zurueckwechseln neu anzeigen
-        self.acr122u_status_widget.setVisible(not is_tonuino)
-        self.tonuino_status_widget.setVisible(is_tonuino)
-        if is_tonuino and self.tonuino_port_combo.count() == 0:
-            self._refresh_tonuino_ports()
-        self._update_program_buttons()
-
-    def _refresh_tonuino_ports(self):
-        """Aktualisiert die Liste der verfuegbaren COM-Ports fuer den TonUINO"""
-        self.tonuino_port_combo.clear()
-        ports = TonuinoSerial.list_ports()
-        if not ports:
-            self.tonuino_port_combo.addItem("Kein COM-Port gefunden", None)
-            self.tonuino_port_combo.setEnabled(False)
-            return
-        self.tonuino_port_combo.setEnabled(True)
-        for p in ports:
-            self.tonuino_port_combo.addItem(f"{p.device} - {p.description}", p.device)
-
-    def _on_tonuino_connect_clicked(self):
-        """Verbindet sich mit dem per USB angeschlossenen TonUINO bzw. trennt
-        eine bestehende Verbindung wieder."""
-        if self.tonuino_serial.is_connected:
-            self.tonuino_serial.disconnect()
-            self.btn_tonuino_connect.setText("Verbinden")
-            self.tonuino_status_label.setText("Nicht verbunden.")
-            self._update_program_buttons()
-            return
-
-        if not TonuinoSerial.serial_available():
-            QMessageBox.warning(
-                self, "Fehler",
-                "Das Paket 'pyserial' ist nicht installiert."
-            )
-            return
-
-        port = self.tonuino_port_combo.currentData()
-        if not port:
-            QMessageBox.information(self, "COM-Port wählen", "Bitte wähle einen COM-Port.")
-            return
-
-        self.tonuino_status_label.setText("Verbinde...")
-        self.btn_tonuino_connect.setEnabled(False)
-        self._tonuino_connect_worker = TonuinoConnectWorker(self.tonuino_serial, port)
-        self._tonuino_connect_worker.completed.connect(
-            lambda ok, message, port=port: self._on_tonuino_connected(ok, message, port)
-        )
-        self._tonuino_connect_worker.start()
-
-    def _on_tonuino_connected(self, success: bool, message: str, port: str):
-        self.btn_tonuino_connect.setEnabled(True)
-        if not success:
-            self.tonuino_status_label.setText(f"Verbindung fehlgeschlagen: {message}")
-            QMessageBox.warning(self, "Fehler", message)
-            return
-
-        self.btn_tonuino_connect.setText("Trennen")
-        self.tonuino_status_label.setText(f"Verbunden mit {port}.")
-        self._update_program_buttons()
-
-    def _update_program_buttons(self):
-        """Schaltet die Programmier-Buttons je nach Kartenstatus UND (fuer
-        'Karte programmieren' zusaetzlich) ausgewaehltem Ordner frei/aus.
-        Die Admin-Karte braucht keinen Ordner, die reguläre Karte schon.
-        Fuer den TonUINO-seriell-Weg gibt es keine Kartenpraesenz-Erkennung
-        (die Firmware meldet das nicht zurueck) - hier zaehlt nur, ob eine
-        Verbindung besteht."""
-        if self._reader_mode == self.READER_MODE_TONUINO:
-            connected = self.tonuino_serial.is_connected
-            self.btn_program_admin.setEnabled(connected)
-            # Ordnerunabhaengig: manche WRITECARD-Modi (z.B. "Wiederhole",
-            # "Bluetooth an/aus") brauchen keinen Ordner - die Pruefung, ob
-            # fuer den gewaehlten Modus ein Ordner noetig ist, passiert erst
-            # in _program_rfid_card_via_serial() nach der Modusauswahl.
-            self.btn_program_card.setEnabled(connected)
-            # Das Loeschen einzelner Karten-Bytes ist ueber die TonUINO-Admin-
-            # Menuefuehrung nicht vorgesehen (nur ueber den ACR122U moeglich)
-            self._set_erase_icon_state(False)
-            return
-
-        self.btn_program_admin.setEnabled(self._rfid_card_present)
-        self.btn_program_card.setEnabled(
-            self._rfid_card_present
-            and self.current_folder is not None
-            and not self._is_special_folder(self.current_folder)
-        )
-        self._set_erase_icon_state(self._rfid_card_present and self._rfid_card_programmed)
-
-    def _update_card_status(self, present: bool):
-        """Setzt Karten- und Programmiert-Icon auf den 'keine Karte'-Zustand zurueck"""
-        if not present:
-            self._set_status_icon(self.card_icon, "neutral")
-            self._set_status_icon(self.programmed_icon, "neutral")
-            self._rfid_card_present = False
-            self._rfid_card_programmed = False
-            self._update_program_buttons()
-
-    def _apply_rfid_status(self, status: RfidStatus):
-        """Uebernimmt das Ergebnis des RFID-Pollers in die Anzeige"""
-        if self._reader_mode != self.READER_MODE_ACR122U:
-            return
-        if status == self._last_rfid_status:
-            return
-        self._last_rfid_status = status
-
-        self._set_status_icon(self.reader_icon, status.reader)
-
-        if status.error:
-            # Fehler nur in der Statusleiste anzeigen, nicht als Popup
-            self.status_bar.showMessage(f"RFID-Fehler: {status.error}")
-
-        if status.card == "ok":
-            self._set_status_icon(self.card_icon, "ok")
-            self._set_status_icon(self.programmed_icon, "ok" if status.programmed else "warning")
-            self._rfid_card_present = True
-            self._rfid_card_programmed = status.programmed
-            self._update_program_buttons()
-        elif status.card == "warning":
-            self._set_status_icon(self.card_icon, "warning")
-            self._set_status_icon(self.programmed_icon, "neutral")
-            self._rfid_card_present = False
-            self._rfid_card_programmed = False
-            self._update_program_buttons()
-        else:
-            self._update_card_status(present=False)
-
-    RFID_MODES = PLAYBACK_MODES
-
-    # WRITECARD-Modi fuer den TonUINO-seriell-Weg (siehe core.tonuino_serial) -
-    # alle 16 Firmware-Modi ausser Admin, der einen eigenen Button hat.
-    TONUINO_MODES = [
-        (info.label, info.value)
-        for info in TonuinoSerial.WRITECARD_MODES.values()
-        if info.value != TonuinoSerial.PMODE_ADMIN_CARD
-    ]
-
-    def _program_rfid_card(self):
-        """Programmiert eine RFID-Karte"""
-        if self._reader_mode == self.READER_MODE_TONUINO:
-            self._program_rfid_card_via_serial()
-            return
-
-        if not self.current_folder or self._is_special_folder(self.current_folder):
-            QMessageBox.warning(
-                self,
-                "Kein Ordner",
-                "Bitte wähle zuerst einen Ordner aus."
-            )
-            return
-
-        if not self.rfid_reader.is_card_present():
-            QMessageBox.information(
-                self,
-                "Karte legen",
-                "Bitte lege eine Karte auf den Reader."
-            )
-            return
-
-        mode_labels = [label for label, _ in self.RFID_MODES]
-        mode_label, ok = QInputDialog.getItem(
-            self,
-            "Wiedergabemodus",
-            f"Modus für Ordner '{self._resolve_folder_name(self.current_folder)}':",
-            mode_labels,
-            1,  # Standard: Album
-            False
-        )
-        if not ok:
-            return
-
-        mode = dict(self.RFID_MODES)[mode_label]
-        special = 0
-
-        if mode == 4:  # Einzelner Track
-            track_count = max(self.current_folder.track_count, 1)
-            special, ok = QInputDialog.getInt(
-                self,
-                "Track auswählen",
-                "Welcher Track soll gespielt werden?",
-                1, 1, track_count
-            )
-            if not ok:
-                return
-
-        confirmed = confirm_action(
-            self,
-            "Karte programmieren",
-            f"Soll die Karte für Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
-            f"programmiert werden?",
-            default_no=False
-        )
-
-        if confirmed:
-            try:
-                success = self.rfid_reader.write_tonuino_card(
-                    self.current_folder.index,
-                    mode=mode,
-                    special=special
-                )
-                if success:
-                    self.status_bar.showMessage("Karte erfolgreich programmiert!")
-                    QMessageBox.information(
-                        self,
-                        "Erfolg",
-                        "Die Karte wurde erfolgreich programmiert!"
-                    )
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Fehler",
-                        "Die Karte konnte nicht programmiert werden."
-                    )
-            except Exception as e:
-                QMessageBox.warning(
-                    self,
-                    "Fehler",
-                    f"Fehler beim Programmieren: {e}"
-                )
-
-    def _program_admin_card(self):
-        """Programmiert eine TonUINO-Admin-Karte (keinem Ordner zugeordnet)"""
-        if self._reader_mode == self.READER_MODE_TONUINO:
-            self._program_admin_card_via_serial()
-            return
-
-        if not self.rfid_reader.is_card_present():
-            QMessageBox.information(
-                self,
-                "Karte legen",
-                "Bitte lege eine Karte auf den Reader."
-            )
-            return
-
-        confirmed = confirm_action(
-            self,
-            "Admin-Karte programmieren",
-            "Soll diese Karte als Admin-Karte programmiert werden?\n\n"
-            "Eine Admin-Karte ist keinem Ordner zugeordnet und öffnet am "
-            "TonUINO das Admin-Menü.",
-            default_no=False
-        )
-
-        if confirmed:
-            try:
-                success = self.rfid_reader.write_admin_card()
-                if success:
-                    self.status_bar.showMessage("Admin-Karte erfolgreich programmiert!")
-                    QMessageBox.information(
-                        self,
-                        "Erfolg",
-                        "Die Admin-Karte wurde erfolgreich programmiert!"
-                    )
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Fehler",
-                        "Die Admin-Karte konnte nicht programmiert werden."
-                    )
-            except Exception as e:
-                QMessageBox.warning(
-                    self,
-                    "Fehler",
-                    f"Fehler beim Programmieren: {e}"
-                )
-
-    def _program_rfid_card_via_serial(self):
-        """TonUINO-seriell-Pendant zu _program_rfid_card(): schreibt eine auf dem
-        TonUINO-eigenen Leser aufliegende (bzw. noch aufzulegende) Karte per
-        WRITECARD-Befehl (siehe core.tonuino_serial). Anders als beim ACR122U-Weg
-        kann keine Kartenpraesenz erkannt werden."""
-        if not self.tonuino_serial.is_connected:
-            QMessageBox.information(
-                self,
-                "Nicht verbunden",
-                "Bitte zuerst mit dem TonUINO verbinden."
-            )
-            return
-
-        mode_labels = [label for label, _ in self.TONUINO_MODES]
-        mode_label, ok = QInputDialog.getItem(
-            self,
-            "Wiedergabemodus",
-            "Modus:",
-            mode_labels,
-            1,  # Standard: Album
-            False
-        )
-        if not ok:
-            return
-
-        mode = dict(self.TONUINO_MODES)[mode_label]
-        info = TonuinoSerial.WRITECARD_MODES[mode]
-
-        folder = None
-        special = None
-        special2 = None
-
-        if info.group != TonuinoSerial.GROUP_MODE_ONLY:
-            if not self.current_folder or self._is_special_folder(self.current_folder):
-                QMessageBox.warning(
-                    self,
-                    "Kein Ordner",
-                    "Bitte wähle zuerst einen Ordner aus."
-                )
-                return
-            folder = self.current_folder.index
-
-        if info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL:
-            if mode == TonuinoSerial.PMODE_EINZEL:
-                track_count = max(self.current_folder.track_count, 1)
-                special, ok = QInputDialog.getInt(
-                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
-                    1, 1, track_count
-                )
-            else:  # PMODE_HOERBUCH_1 ("Hörbuch einzel")
-                special, ok = QInputDialog.getInt(
-                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
-                    0, 0, 29
-                )
-            if not ok:
-                return
-
-        elif info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL_SPECIAL2:
-            if mode == TonuinoSerial.PMODE_QUIZ_GAME:
-                special_label, ok = QInputDialog.getItem(
-                    self, "Quiz Spiel", "Anzahl Antwortmöglichkeiten:",
-                    ["0", "2", "4"], 1, False
-                )
-                if not ok:
-                    return
-                special2_label, ok = QInputDialog.getItem(
-                    self, "Quiz Spiel", "Mit Wiederholung bei falscher Antwort:",
-                    ["0", "1"], 0, False
-                )
-                if not ok:
-                    return
-                special, special2 = int(special_label), int(special2_label)
-            else:  # von-bis-Modi (Hörspiel/Album/Party/Hörbuch von-bis)
-                track_count = max(self.current_folder.track_count, 1)
-                special, ok = QInputDialog.getInt(
-                    self, "Track-Bereich", "Von Track:", 1, 1, track_count
-                )
-                if not ok:
-                    return
-                special2, ok = QInputDialog.getInt(
-                    self, "Track-Bereich", "Bis Track:", special, special, track_count
-                )
-                if not ok:
-                    return
-
-        if folder is not None:
-            confirm_text = (
-                f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann für "
-                f"Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
-                f"programmiert werden?"
-                f"{TONUINO_IDLE_HINT}"
-            )
-        else:
-            confirm_text = (
-                f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann als "
-                f"\'{mode_label}\'-Karte programmiert werden?"
-                f"{TONUINO_IDLE_HINT}"
-            )
-
-        confirmed = confirm_action(self, "Karte programmieren", confirm_text, default_no=False)
-        if not confirmed:
-            return
-
-        self._start_tonuino_write(mode, folder, special, special2)
-
-    def _program_admin_card_via_serial(self):
-        """TonUINO-seriell-Pendant zu _program_admin_card()"""
-        if not self.tonuino_serial.is_connected:
-            QMessageBox.information(
-                self,
-                "Nicht verbunden",
-                "Bitte zuerst mit dem TonUINO verbinden."
-            )
-            return
-
-        confirmed = confirm_action(
-            self,
-            "Admin-Karte programmieren",
-            "Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann als "
-            "Admin-Karte programmiert werden?\n\nEine Admin-Karte ist keinem "
-            "Ordner zugeordnet und öffnet am TonUINO das Admin-Menü."
-            + TONUINO_IDLE_HINT,
-            default_no=False
-        )
-        if not confirmed:
-            return
-
-        self._start_tonuino_write(TonuinoSerial.PMODE_ADMIN_CARD, None, None, None)
-
-    def _start_tonuino_write(self, mode: int, folder: Optional[int],
-                              special: Optional[int], special2: Optional[int]):
-        """Startet die Karten-Programmierung ueber den seriell verbundenen
-        TonUINO in einem Hintergrund-Thread (siehe TonuinoCardWorker) - die
-        Firmware wartet ohne eigenes Timeout darauf, dass eine Karte aufgelegt
-        wird, daher kann das beliebig lange dauern; per btn_tonuino_cancel_write
-        kann der Vorgang abgebrochen werden (WRITECARD CANCEL)."""
-        self._tonuino_cancel_requested = False
-        self.btn_program_card.setEnabled(False)
-        self.btn_program_admin.setEnabled(False)
-        self.btn_tonuino_connect.setEnabled(False)
-        self.btn_tonuino_cancel_write.setVisible(True)
-        self.btn_tonuino_cancel_write.setEnabled(True)
-        self.tonuino_status_label.setText(
-            "Bitte jetzt eine leere Karte auf den TonUINO-Leser legen "
-            "(TonUINO muss im Leerlauf oder in Pause sein) - Programmierung läuft..."
-        )
-
-        self._tonuino_worker = TonuinoCardWorker(self.tonuino_serial, mode, folder, special, special2)
-        self._tonuino_worker.completed.connect(self._on_tonuino_write_finished)
-        self._tonuino_worker.start()
-
-    def _on_tonuino_cancel_write_clicked(self):
-        """Bricht eine laufende TonUINO-Kartenprogrammierung ab (WRITECARD CANCEL) -
-        das Ergebnis (Fehler-Abschluss) kommt ueber den laufenden TonuinoCardWorker
-        und _on_tonuino_write_finished() zurueck, nicht hier."""
-        self._tonuino_cancel_requested = True
-        self.btn_tonuino_cancel_write.setEnabled(False)
-        self.tonuino_status_label.setText("Abbruch angefordert...")
-        try:
-            self.tonuino_serial.cancel_write()
-        except TonuinoSerialError as e:
-            QMessageBox.warning(self, "Fehler", f"Abbruch fehlgeschlagen: {e}")
-
-    def _on_tonuino_write_finished(self, success: bool, message: str):
-        self.btn_tonuino_connect.setEnabled(True)
-        self.btn_tonuino_cancel_write.setVisible(False)
-        self._update_program_buttons()
-        if success:
-            port = self.tonuino_port_combo.currentData()
-            self.tonuino_status_label.setText(f"Verbunden mit {port}." if port else "Verbunden.")
-            self.status_bar.showMessage(message)
-            QMessageBox.information(self, "Erfolg", message)
-        else:
-            self.tonuino_status_label.setText(f"Fehler: {message}")
-            QMessageBox.warning(self, "Fehler", f"Die Karte konnte nicht programmiert werden:\n{message}")
-
-    def _set_erase_icon_state(self, enabled: bool):
-        """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
-        (nichts zu loeschen) und blockt Klicks im deaktivierten Zustand -
-        wie bei einem echten (aber unsichtbaren) Button."""
-        color = "#f38ba8" if enabled else "#585b70"
-        self.erase_card_icon.setPixmap(self._icon_from_glyph("", color=color, size=20).pixmap(20, 20))
-        self.erase_card_icon.setEnabled(enabled)
-
-    def _erase_rfid_card(self):
-        """Loescht die Tonuino-Daten der aufliegenden Karte unwiderruflich -
-        die Karte gilt danach wieder als unprogrammiert."""
-        if not self.rfid_reader.is_card_present():
-            QMessageBox.information(
-                self,
-                "Karte legen",
-                "Bitte lege eine Karte auf den Reader."
-            )
-            return
-
-        confirmed = confirm_action(
-            self,
-            "Karten-Daten löschen",
-            "Sollen alle Tonuino-Daten auf dieser Karte unwiderruflich gelöscht werden?"
-        )
-
-        if confirmed:
-            try:
-                success = self.rfid_reader.erase_tonuino_card()
-                if success:
-                    self.status_bar.showMessage("Karten-Daten erfolgreich gelöscht!")
-                    QMessageBox.information(
-                        self,
-                        "Erfolg",
-                        "Die Karten-Daten wurden erfolgreich gelöscht!"
-                    )
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Fehler",
-                        "Die Karten-Daten konnten nicht gelöscht werden."
-                    )
-            except Exception as e:
-                QMessageBox.warning(
-                    self,
-                    "Fehler",
-                    f"Fehler beim Löschen: {e}"
-                )
-
-    def _check_for_updates(self):
-        """Automatische Update-Pruefung beim Programmstart - nur, wenn im
-        Hilfe-Menue nicht deaktiviert. Ohne Drosselung, da ein GitHub-API-
-        Request beim Start keinen nennenswerten Traffic verursacht. Schlaegt
-        die Pruefung fehl, bleibt das hier bewusst unbemerkt (siehe
-        UpdateChecker) - anders als bei der manuellen Pruefung ueber das
-        Menue soll ein Start nie mit einer Fehlermeldung unterbrochen werden."""
-        if not QSettings().value("updater/auto_check_enabled", True, type=bool):
-            return
-        self._run_update_check(manual=False)
-
-    def _check_for_updates_manual(self):
-        """Manuelle Update-Pruefung ueber Hilfe > Nach Updates suchen - meldet
-        im Gegensatz zum automatischen Start-Check explizit, ob ein Update
-        gefunden wurde, keins vorhanden ist, oder die Pruefung fehlgeschlagen ist."""
-        if self._update_checker is not None and self._update_checker.isRunning():
-            return
-        self._run_update_check(manual=True)
-
-    def _run_update_check(self, manual: bool):
-        self._update_checker = UpdateChecker(__version__)
-        self._update_checker.update_available.connect(self._on_update_available)
-        if manual:
-            self._update_checker.no_update.connect(self._on_manual_check_no_update)
-            self._update_checker.check_failed.connect(self._on_manual_check_failed)
-        self._update_checker.start()
-
-    def _on_manual_check_no_update(self):
-        QMessageBox.information(
-            self,
-            "Kein Update verfügbar",
-            f"Sie verwenden bereits die neueste Version ({__version__})."
-        )
-
-    def _on_manual_check_failed(self, message: str):
-        QMessageBox.warning(
-            self,
-            "Update-Prüfung fehlgeschlagen",
-            f"Die Prüfung auf Updates ist fehlgeschlagen:\n{message}"
-        )
-
-    def _on_auto_check_toggled(self, checked: bool):
-        QSettings().setValue("updater/auto_check_enabled", checked)
-
-    def _on_update_available(self, info: UpdateInfo):
-        settings = QSettings()
-
-        if settings.value("updater/ignored_version", "", type=str) == info.version:
-            return
-
-        dialog = UpdateDialog(info, __version__, self)
-        dialog.exec()
-
-        if dialog.result_choice == UpdateDialog.UPDATE_NOW:
-            self._start_update_download(info)
-        elif dialog.result_choice == UpdateDialog.IGNORE:
-            settings.setValue("updater/ignored_version", info.version)
-
-    def _start_update_download(self, info: UpdateInfo):
-        """Laedt den passenden Installer herunter, mit Fortschrittsanzeige"""
-        self._update_download_dialog = QProgressDialog(
-            f"Lade Update {info.version} herunter...", "Abbrechen", 0, 100, self
-        )
-        self._update_download_dialog.setWindowTitle("Update herunterladen")
-        self._update_download_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self._update_download_dialog.setMinimumDuration(0)
-        self._update_download_dialog.setValue(0)
-
-        self._update_downloader = UpdateDownloader(info)
-        self._update_downloader.progress.connect(self._on_update_download_progress)
-        self._update_downloader.completed.connect(self._on_update_download_finished)
-        self._update_downloader.error.connect(self._on_update_download_error)
-        self._update_download_dialog.canceled.connect(self._update_downloader.cancel)
-
-        self._update_downloader.start()
-
-    def _on_update_download_progress(self, read: int, total: int):
-        if total > 0:
-            self._update_download_dialog.setMaximum(total)
-            self._update_download_dialog.setValue(read)
-        else:
-            self._update_download_dialog.setMaximum(0)
-
-    def _on_update_download_finished(self, filepath: str):
-        self._update_download_dialog.close()
-        self._launch_installer(filepath)
-
-    def _on_update_download_error(self, message: str):
-        self._update_download_dialog.close()
-        QMessageBox.warning(
-            self,
-            "Download fehlgeschlagen",
-            f"Das Update konnte nicht heruntergeladen werden:\n{message}\n\n"
-            f"Sie können es manuell herunterladen:\n{GITHUB_RELEASES_PAGE}"
-        )
-
-    def _launch_installer(self, filepath: str):
-        """Uebergibt den heruntergeladenen Installer an das Betriebssystem.
-        Unter Windows wird die App danach beendet, da installer.iss keine
-        CloseApplications-Direktive hat und der Installer die laufende, aus
-        Program Files gestartete EXE sonst nicht ueberschreiben kann. Unter
-        Linux/macOS bleibt die App offen - dort besteht kein Datei-Konflikt,
-        da .deb-Paketinstallation bzw. .dmg-Mounten die laufende Instanz nicht
-        beruehren."""
-        try:
-            if sys.platform.startswith("win"):
-                os.startfile(filepath)
-                QApplication.instance().quit()
-            elif sys.platform.startswith("linux"):
-                subprocess.Popen(["xdg-open", filepath])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", filepath])
-            else:
-                self._show_update_manual_fallback(filepath)
-        except Exception:
-            self._show_update_manual_fallback(filepath)
-
-    def _show_update_manual_fallback(self, filepath: str):
-        QMessageBox.information(
-            self,
-            "Manuelle Installation erforderlich",
-            f"Die Installationsdatei wurde heruntergeladen nach:\n{filepath}\n\n"
-            f"Bitte führen Sie die Datei manuell aus, oder laden Sie sie erneut "
-            f"herunter unter:\n{GITHUB_RELEASES_PAGE}"
-        )
-
     def closeEvent(self, event):
         """Wird beim Schliessen aufgerufen"""
         self.player_bar.stop()
-        if self._rfid_poller is not None:
-            self._rfid_poller.stop()
-            self._rfid_poller.wait(3000)
+        self.rfid_panel.shutdown()
+        self.update_controller.shutdown()
         self._stop_background_threads()
-        if self.rfid_reader:
-            self.rfid_reader.disconnect()
-        if self.tonuino_serial.is_connected:
-            self.tonuino_serial.disconnect()
         event.accept()
 
     def _stop_background_threads(self):
         """Beendet laufende Hintergrund-Threads, bevor das Fenster verschwindet -
-        sonst endet der Prozess mit 'QThread: Destroyed while thread is still
-        running' bzw. der Serial-Thread liest von einem schon geschlossenen Port."""
-        if self._tonuino_worker is not None and self._tonuino_worker.isRunning():
-            try:
-                self.tonuino_serial.cancel_write()
-            except TonuinoSerialError:
-                pass
-            self._tonuino_worker.wait(3000)
+        sonst endet der Prozess mit 'QThread: Destroyed while thread is still running'."""
+        if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
+            self._add_tracks_worker.cancel()
+            self._add_tracks_worker.wait(3000)
 
-        for worker in (self._add_tracks_worker, self._update_downloader):
-            if worker is not None and worker.isRunning():
-                worker.cancel()
-                worker.wait(3000)
-
-        # Scan, Bereinigung und Update-Pruefung sind nicht abbrechbar - kurz auslaufen lassen
         self._stop_folder_name_worker()
         self._stop_track_meta_worker()
-        for worker in (self.scanner, self._purge_worker, self._update_checker, self._tonuino_connect_worker):
+
+        # Scan und Bereinigung sind nicht abbrechbar - kurz auslaufen lassen
+        for worker in (self.scanner, self._purge_worker):
             if worker is not None and worker.isRunning():
                 worker.wait(3000)

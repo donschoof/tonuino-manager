@@ -8,10 +8,12 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QStyle, QWidget, QSizePolicy
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QStyle, QWidget
 from PyQt6.QtCore import Qt, QUrl, QCoreApplication, QSize, QRectF, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPainterPath, QColor
+from PyQt6.QtGui import QFontMetrics, QIcon, QPixmap, QPainter, QPainterPath, QColor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+from gui.common import icon_from_glyph
 
 
 def _silence_ffmpeg_logging():
@@ -59,22 +61,6 @@ _ICON_VOLUME_OFF = "\ue04f"   # volume_off
 _DISABLED_COLOR = "#45475a"
 
 
-def _icon_from_glyph(glyph: str, color: str = "#cdd6f4", size: int = 16) -> QIcon:
-    """Rendert ein Material-Icons-Glyph als QIcon (siehe MainWindow._icon_from_glyph)"""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    font = QFont("Material Icons")
-    font.setPointSize(int(size * 0.65))
-    painter.setFont(font)
-    painter.setPen(QColor(color))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
-    painter.end()
-
-    return QIcon(pixmap)
-
-
 def _transport_icon(glyph: str, size: int, main_color: str, hover_color: str) -> QIcon:
     """Symbol fuer die flachen Player-Steuerelemente: in main_color, beim
     Ueberfahren (QIcon.Mode.Active) in hover_color, deaktiviert deutlich
@@ -85,7 +71,7 @@ def _transport_icon(glyph: str, size: int, main_color: str, hover_color: str) ->
         (QIcon.Mode.Active, hover_color),
         (QIcon.Mode.Disabled, _DISABLED_COLOR),
     ):
-        icon.addPixmap(_icon_from_glyph(glyph, color=color, size=size).pixmap(size, size), mode)
+        icon.addPixmap(icon_from_glyph(glyph, color=color, size=size).pixmap(size, size), mode)
     return icon
 
 
@@ -220,7 +206,7 @@ def rounded_cover(source: Optional[QPixmap], size: int, radius: int = 6) -> QPix
     else:
         painter.fillRect(QRectF(0, 0, size, size), QColor("#313244"))
         painter.setClipping(False)
-        note = _icon_from_glyph(_ICON_NOTE, color="#6c7086", size=int(size * 0.6)).pixmap(int(size * 0.6), int(size * 0.6))
+        note = icon_from_glyph(_ICON_NOTE, color="#6c7086", size=int(size * 0.6)).pixmap(int(size * 0.6), int(size * 0.6))
         offset = (size - note.width()) // 2
         painter.drawPixmap(offset, offset, note)
     painter.end()

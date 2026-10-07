@@ -131,9 +131,6 @@ class SDCard:
 
             folder_index = int(match.group(1))
 
-            if item.name.lower() == "admin":
-                continue
-
             folder = Folder(
                 index=folder_index,
                 path=str(item)

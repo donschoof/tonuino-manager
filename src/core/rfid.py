@@ -4,7 +4,6 @@ Unterstuetzt ACR122U NFC/RFID-Lesegeraet
 """
 
 import functools
-import struct
 import threading
 import time
 from typing import Optional, Tuple, List
@@ -32,11 +31,6 @@ class TonuinoCardData:
     mode: int
     special: int = 0
     special2: int = 0
-
-    @property
-    def is_admin(self) -> bool:
-        """True, wenn es sich um eine Admin-Karte handelt (mode == admin_card, folder == 0)"""
-        return self.mode == 0xFF
 
 
 # Wiedergabemodi wie von der original TonUINO-Firmware erwartet (chip_card.hpp:
@@ -88,13 +82,9 @@ class RFIDReader:
     CMD_GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
     CMD_READ_BLOCK = [0xFF, 0xB0, 0x00]
     CMD_WRITE_BLOCK = [0xFF, 0xD6, 0x00]
-    CMD_AUTH_KEY_A = [0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00]
-    CMD_LOAD_KEY = [0xFF, 0x82, 0x00, 0x00, 0x06]
-    
-    # Standard Keys
+
+    # Standard-Schluessel (Werkseinstellung neuer MIFARE-Classic-Karten)
     DEFAULT_KEY_A = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-    NDEF_KEY_A = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5]
-    MAD_KEY_A = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5]
     
     def __init__(self):
         self._context = None
@@ -313,58 +303,6 @@ class RFIDReader:
                 status.card = "none"
                 status.error = str(e)
             return status
-
-    def _get_status(self):
-        """Holt den Status des Readers"""
-        from smartcard.scard import (
-            SCardEstablishContext, SCARD_SCOPE_USER,
-            SCardListReaders, SCardGetStatusChange,
-            SCARD_STATE_UNAWARE
-        )
-        
-        if not self._context:
-            hresult, self._context = SCardEstablishContext(SCARD_SCOPE_USER)
-        
-        if hresult != 0:
-            return hresult, None, [], []
-        
-        hresult, readers = SCardListReaders(self._context, [])
-        
-        if hresult != 0 or not readers:
-            return hresult, self._context, readers, []
-        
-        reader_states = []
-        for reader in readers:
-            reader_states.append((reader, SCARD_STATE_UNAWARE))
-        
-        hresult, new_states = SCardGetStatusChange(
-            self._context, 100, reader_states
-        )
-        
-        return hresult, self._context, readers, new_states
-    
-    def wait_for_card(self, timeout_ms: int = 5000) -> bool:
-        """Wartet auf eine Karte"""
-        if not self._reader_available:
-            return False
-        
-        try:
-            from smartcard.scard import (
-                SCardGetStatusChange, SCARD_STATE_PRESENT
-            )
-            
-            import time
-            start_time = time.time()
-            
-            while (time.time() - start_time) * 1000 < timeout_ms:
-                if self.is_card_present():
-                    return True
-                time.sleep(0.1)
-            
-            return False
-            
-        except Exception:
-            return False
 
     def get_card_uid(self) -> Optional[str]:
         """Liest die UID einer Karte"""
@@ -680,20 +618,3 @@ class RFIDReader:
             print(f"Fehler beim Lesen der Tonuino-Karte: {e}")
             return None
     
-    def format_card(self, key: List[int] = None) -> bool:
-        """Formattiert eine Karte"""
-        if not self._reader_available:
-            return False
-        
-        try:
-            empty_block = bytes(16)
-            for block in range(0, 64):
-                if block % 4 == 3:
-                    continue
-                if not self.write_block(block, empty_block, key):
-                    return False
-            return True
-            
-        except Exception as e:
-            print(f"Fehler beim Formattieren: {e}")
-            return False
