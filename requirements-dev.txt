@@ -3,3 +3,4 @@
 pyinstaller>=6.9.0  # PYINSTALLER_RESET_ENVIRONMENT (siehe update_controller.py)
 pytest>=8.0
 pyflakes>=3.2
+pillow>=10.0  # tools/make_icons.py
