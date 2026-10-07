@@ -81,3 +81,15 @@ def icon_from_glyph(glyph: str, color: str = theme.BASE, size: int = 16) -> QIco
     painter.end()
 
     return QIcon(pixmap)
+
+
+def icon_with_hover(glyph: str, color: str, hover_color: str, size: int = 16) -> QIcon:
+    """Wie icon_from_glyph, zeigt beim Ueberfahren (QIcon.Mode.Active) aber hover_color.
+    Noetig, wenn der Button beim Hover seine Hintergrundfarbe aendert und das Symbol
+    sonst darin verschwinden wuerde. Deaktiviert zeichnet Qt es automatisch abgeblasst."""
+    icon = QIcon()
+    normal = icon_from_glyph(glyph, color=color, size=size).pixmap(size, size)
+    active = icon_from_glyph(glyph, color=hover_color, size=size).pixmap(size, size)
+    icon.addPixmap(normal, QIcon.Mode.Normal)
+    icon.addPixmap(active, QIcon.Mode.Active)
+    return icon
