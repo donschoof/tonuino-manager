@@ -13,7 +13,7 @@ Ein hübsches Tool zum Verwalten von Tonuino SD-Karten und RFID-Karten für Wind
 - **Ordnername & Cover**: aus Album-Tag und eingebettetem Cover des ersten Tracks
 - **SD-Karte bereinigen**: entfernt alles, was nicht zur Tonuino-Struktur gehört, und nummeriert Ordner und Tracks lückenlos neu (mit Sicherheitsabfrage)
 - **RFID-Programmierung**: Ordner- und Admin-Karten per ACR122U oder direkt über den TonUINO, mit Live-Status von Reader, Karte und Ordner in der Sidebar (siehe [RFID-Karten](#rfid-karten))
-- **Updates**: Prüfung beim Start (im Burger-Menü abschaltbar oder manuell auslösbar)
+- **Updates**: Prüfung beim Start (im Menü „Einstellungen“ abschaltbar oder manuell auslösbar)
 
 ## Installation
 
@@ -56,7 +56,7 @@ Unterstützt werden MIFARE Mini, Classic 1K/4K sowie Ultralight/NTAG21x. Der Kar
 - **Ordnerkarten**: Ordner plus Wiedergabemodus (Hörspiel, Album, Party, Einzelner Track, Hörbuch)
 - **Admin-Karten**: öffnen das Admin-Menü am TonUINO
 
-Den Programmierweg wählst du im Burger-Menü unter **RFID-Leser**:
+Den Programmierweg wählst du im Menü **Einstellungen** unter **RFID-Leser**:
 
 - **ACR122U** (Standard): USB-Reader, alle Funktionen inkl. Löschen einzelner Karten
 - **TonUINO (seriell)**: Karte wird über den per USB verbundenen TonUINO und dessen eigenen Leser geschrieben, kein extra Reader nötig. Voraussetzung ist [TonUINO-TNG](https://github.com/tonuino/TonUINO-TNG) mit `#define SerialInputAsCommand` (`src/constants.hpp`). Der TonUINO muss im Leerlauf oder pausiert sein, die Karte liegt auf seinem Leser. Löschen ist in diesem Modus nicht möglich.

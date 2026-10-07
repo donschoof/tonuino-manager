@@ -55,7 +55,41 @@ QWidget {
     font-size: 10pt;
 }
 
-/* === Sandwich-Menue (siehe MainWindow._create_menu_button) === */
+/* === Titelleiste / Menueleiste (siehe gui/title_bar.py, MainWindow._create_menu_bar) === */
+QWidget#titleBar {
+    background-color: #181825;
+    border-bottom: 1px solid #313244;
+}
+
+QMenuBar, QMenuBar#titleMenuBar {
+    background-color: transparent;
+    color: #cdd6f4;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background-color: #313244;
+}
+
+QToolButton#windowButton, QToolButton#windowCloseButton {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+}
+
+QToolButton#windowButton:hover {
+    background-color: #313244;
+}
+
+QToolButton#windowCloseButton:hover {
+    background-color: #f38ba8;
+}
+
 QMenu {
     background-color: #1e1e2e;
     border: 1px solid #313244;
@@ -73,19 +107,6 @@ QMenu::separator {
     height: 1px;
     background-color: #313244;
     margin: 4px 8px;
-}
-
-/* Sandwich-Menue-Button oben rechts im Content-Bereich - transparent
-   statt als abgesetzte Schaltflaeche. */
-QToolButton#menuButton {
-    background: transparent;
-    border: none;
-    padding: 4px;
-}
-
-QToolButton#menuButton:hover {
-    background-color: #313244;
-    border-radius: 4px;
 }
 
 /* === Sidebar === */
