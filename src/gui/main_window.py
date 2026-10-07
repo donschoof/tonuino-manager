@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
 
     # Kantenlaenge (px) des Ordner-Covers im Kopfbereich
     FOLDER_COVER_SIZE = 150
+    SIDEBAR_LOGO_SIZE = 56
 
     # Breite des Fensterrands (px), an dem unter Windows die Groesse geaendert wird
     RESIZE_BORDER = 6
@@ -239,10 +240,15 @@ class MainWindow(QMainWindow):
         logo_label = QLabel()
         logo_pixmap = QPixmap(logo_path)
         if not logo_pixmap.isNull():
-            logo_label.setPixmap(logo_pixmap.scaled(
-                40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            ))
-        logo_label.setMinimumHeight(60)
+            # in Geraetepixeln skalieren, damit das Logo auch bei hoher DPI scharf bleibt
+            ratio = self.devicePixelRatioF()
+            scaled = logo_pixmap.scaled(
+                round(self.SIDEBAR_LOGO_SIZE * ratio), round(self.SIDEBAR_LOGO_SIZE * ratio),
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            scaled.setDevicePixelRatio(ratio)
+            logo_label.setPixmap(scaled)
+        logo_label.setMinimumHeight(self.SIDEBAR_LOGO_SIZE + 8)
         title_row.addWidget(logo_label)
 
         title = QLabel("Tonuino-Manager")
