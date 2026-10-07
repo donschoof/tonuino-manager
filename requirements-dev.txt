@@ -3,3 +3,4 @@
 pyinstaller>=6.0.0
 pytest>=8.0
 pyflakes>=3.2
+pillow>=10.0  # tools/make_icons.py
