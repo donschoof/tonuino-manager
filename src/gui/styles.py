@@ -132,6 +132,14 @@ QPushButton {
     min-height: 20px;
 }
 
+/* Eingeschalteter Umschalter (z.B. Mehrfachauswahl) */
+QPushButton:checked {
+    background-color: #89b4fa;
+    color: #1e1e2e;
+    border-color: #89b4fa;
+    font-weight: bold;
+}
+
 QPushButton:hover {
     background-color: #45475a;
     border-color: #585b70;
@@ -204,6 +212,22 @@ QListWidget::item {
     padding: 8px;
     border-radius: 4px;
     margin: 2px 0px;
+}
+
+/* Auswahlkreise der Mehrfachauswahl (wie in Apple Mail) */
+QListWidget::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 9px;
+    border: 2px solid #6c7086;
+    background: transparent;
+}
+
+/* markiert: grauer Ring bleibt, innen sitzt ein deutlich kleinerer blauer Punkt
+   (wie ein Radiobutton) */
+QListWidget::indicator:checked {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 #89b4fa, stop:0.38 #89b4fa, stop:0.5 transparent, stop:1 transparent);
 }
 
 QListWidget::item:selected {

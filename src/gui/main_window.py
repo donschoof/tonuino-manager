@@ -259,6 +259,7 @@ class MainWindow(QMainWindow):
         # Unter Windows ersetzt eine eigene Titelleiste (mit Menue) die native
         # - siehe gui/title_bar.py. Auf macOS/Linux bleibt die normale Menueleiste.
         self._title_bar = None
+        self._multi_select_mode = False
         if sys.platform == "win32":
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setMinimumSize(1200, 800)
@@ -725,18 +726,26 @@ class MainWindow(QMainWindow):
         track_header_layout.addWidget(QLabel("Tracks:"))
         track_header_layout.addStretch()
 
+        self.btn_multi_select = QPushButton(" Auswählen")
+        self.btn_multi_select.setIcon(self._icon_from_glyph("\ue877", color="#cdd6f4"))  # Done all
+        self.btn_multi_select.setCheckable(True)
+        self.btn_multi_select.setToolTip("Mehrfachauswahl ein-/ausschalten")
+        self.btn_multi_select.setEnabled(False)
+        self.btn_multi_select.toggled.connect(self._set_multi_select_mode)
+        track_header_layout.addWidget(self.btn_multi_select)
+
         self.btn_move_track_up = QPushButton()
         self.btn_move_track_up.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Up
-        self.btn_move_track_up.setToolTip("Ausgewählten Track nach oben verschieben")
+        self.btn_move_track_up.setToolTip("Track nach oben verschieben")
         self.btn_move_track_up.setEnabled(False)
-        self.btn_move_track_up.clicked.connect(lambda: self._move_current_track(-1))
+        self.btn_move_track_up.clicked.connect(lambda: self._move_selected_tracks(-1))
         track_header_layout.addWidget(self.btn_move_track_up)
 
         self.btn_move_track_down = QPushButton()
         self.btn_move_track_down.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Down
-        self.btn_move_track_down.setToolTip("Ausgewählten Track nach unten verschieben")
+        self.btn_move_track_down.setToolTip("Track nach unten verschieben")
         self.btn_move_track_down.setEnabled(False)
-        self.btn_move_track_down.clicked.connect(lambda: self._move_current_track(1))
+        self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
         track_header_layout.addWidget(self.btn_move_track_down)
 
         self.btn_play_track = QPushButton(" Abspielen")
@@ -746,7 +755,7 @@ class MainWindow(QMainWindow):
         self.btn_play_track.clicked.connect(self._play_selected_track)
         track_header_layout.addWidget(self.btn_play_track)
 
-        self.btn_delete_tracks = QPushButton(" Auswahl löschen")
+        self.btn_delete_tracks = QPushButton(" Track löschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
         self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
         self.btn_delete_tracks.setEnabled(False)
@@ -759,7 +768,7 @@ class MainWindow(QMainWindow):
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
         self.track_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.track_list.currentItemChanged.connect(self._on_track_current_changed)
-        self.track_list.itemChanged.connect(self._on_track_check_changed)
+        self.track_list.itemClicked.connect(self._on_track_clicked)
         folder_layout.addWidget(self.track_list)
 
         self.stack = QStackedWidget()
@@ -965,6 +974,8 @@ class MainWindow(QMainWindow):
         identity = item.data(Qt.ItemDataRole.UserRole)
         self.current_folder = self.sd_card.get_any_folder(identity)
 
+        # Ein anderer Ordner startet immer wieder im Einzelauswahl-Modus
+        self._set_multi_select_mode(False)
         if self.current_folder:
             self._show_folder(self.current_folder)
 
@@ -1043,9 +1054,8 @@ class MainWindow(QMainWindow):
 
     def _populate_track_list(self, folder: Folder):
         """Baut die Track-Liste eines Ordners neu auf (liest Metadaten je Track).
-        Jeder Track hat eine Checkbox zum Auswaehlen fuer das Loeschen mehrerer
-        Tracks - unabhaengig von der normalen (Einzel-)Auswahl, die fuer die
-        Nach-oben/unten-Buttons benutzt wird."""
+        Im Mehrfachauswahl-Modus zeigt jeder Track einen Auswahlkreis (Haken);
+        sonst gilt die normale Einzelauswahl der Liste."""
         # Player stoppen: die zugrunde liegenden Dateipfade koennen sich durch
         # Hinzufuegen/Loeschen/Umsortieren aendern (Umbenennung auf fortlaufende
         # Nummern), der aktuell geladene Pfad waere dann ungueltig
@@ -1061,14 +1071,17 @@ class MainWindow(QMainWindow):
 
             item = QListWidgetItem(track.display_name)
             item.setData(Qt.ItemDataRole.UserRole, track)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
+            # ItemIsUserCheckable ist standardmaessig gesetzt und wuerde den Kreis
+            # selbst umschalten - dann wuerde _on_track_clicked ihn gleich wieder
+            # zuruecksetzen. Das Umschalten uebernimmt deshalb allein
+            # _on_track_clicked, fuer die ganze Zeile inklusive Kreis.
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            if self._multi_select_mode:
+                item.setCheckState(Qt.CheckState.Unchecked)
             self.track_list.addItem(item)
         self.track_list.blockSignals(False)
 
-        self.btn_delete_tracks.setEnabled(False)
-        self.btn_move_track_up.setEnabled(False)
-        self.btn_move_track_down.setEnabled(False)
+        self._update_track_action_buttons()
     
     def _create_new_folder(self):
         """Erstellt einen neuen Ordner"""
@@ -1431,14 +1444,75 @@ class MainWindow(QMainWindow):
             self._show_folder(self.current_folder)
 
     def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
-        """Aktiviert/deaktiviert die Nach-oben/unten-Buttons je nachdem, ob ein
-        Track (einzeln) ausgewaehlt ist. Abspielen bleibt fuer Systemordner
-        (mp3/advert) erlaubt, Umsortieren nicht."""
-        has_current = current is not None
-        editable = not self._is_special_folder(self.current_folder)
-        self.btn_move_track_up.setEnabled(has_current and editable)
-        self.btn_move_track_down.setEnabled(has_current and editable)
+        """Aktualisiert die Aktions-Buttons passend zur (Einzel-)Auswahl"""
+        self._update_track_action_buttons()
+
+    def _checked_rows(self) -> list:
+        return [
+            row for row in range(self.track_list.count())
+            if self.track_list.item(row).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _update_track_action_buttons(self):
+        """Setzt Aktivierung und Beschriftung der Track-Aktionen. Im
+        Mehrfachauswahl-Modus wirken Loeschen und Nach oben/unten auf alle
+        markierten Tracks, sonst auf den aktuell ausgewaehlten Track.
+        Abspielen bleibt fuer Systemordner (mp3/advert) erlaubt, Bearbeiten
+        (Umsortieren, Loeschen, Mehrfachauswahl) nicht."""
+        editable = bool(self.current_folder) and not self._is_special_folder(self.current_folder)
+        has_current = self.track_list.currentItem() is not None
+        if self._multi_select_mode:
+            has_target = bool(self._checked_rows())
+            self.btn_delete_tracks.setText(" Auswahl löschen")
+            self.btn_move_track_up.setToolTip("Ausgewählte Tracks nach oben verschieben")
+            self.btn_move_track_down.setToolTip("Ausgewählte Tracks nach unten verschieben")
+        else:
+            has_target = has_current
+            self.btn_delete_tracks.setText(" Track löschen")
+            self.btn_move_track_up.setToolTip("Track nach oben verschieben")
+            self.btn_move_track_down.setToolTip("Track nach unten verschieben")
+
+        self.btn_multi_select.setEnabled(editable)
+        self.btn_move_track_up.setEnabled(has_target and editable)
+        self.btn_move_track_down.setEnabled(has_target and editable)
+        self.btn_delete_tracks.setEnabled(has_target and editable)
         self.btn_play_track.setEnabled(has_current)
+
+    def _set_multi_select_mode(self, enabled: bool):
+        """Schaltet die Mehrfachauswahl ein/aus (wie in Apple Mail): Eingeschaltet
+        zeigt jeder Track einen Auswahlkreis, ein Klick auf die Zeile markiert
+        ihn. Ausgeschaltet wird die Auswahl verworfen und es gilt wieder die
+        Einzelauswahl."""
+        self._multi_select_mode = enabled
+
+        if self.btn_multi_select.isChecked() != enabled:
+            self.btn_multi_select.blockSignals(True)
+            self.btn_multi_select.setChecked(enabled)
+            self.btn_multi_select.blockSignals(False)
+        self.btn_multi_select.setText(" Fertig" if enabled else " Auswählen")
+        # dunkles Icon auf dem blauen (eingeschalteten) Button, sonst hell
+        self.btn_multi_select.setIcon(
+            self._icon_from_glyph("", color="#1e1e2e" if enabled else "#cdd6f4")  # Done all
+        )
+
+        self.track_list.blockSignals(True)
+        for row in range(self.track_list.count()):
+            item = self.track_list.item(row)
+            if enabled:
+                item.setCheckState(Qt.CheckState.Unchecked)
+            else:
+                item.setData(Qt.ItemDataRole.CheckStateRole, None)
+        self.track_list.blockSignals(False)
+
+        self._update_track_action_buttons()
+
+    def _on_track_clicked(self, item: QListWidgetItem):
+        """Im Mehrfachauswahl-Modus markiert/entmarkiert ein Klick den Track"""
+        if not self._multi_select_mode:
+            return
+        checked = item.checkState() == Qt.CheckState.Checked
+        item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
+        self._update_track_action_buttons()
 
     def _play_selected_track(self):
         """Spielt den aktuell ausgewaehlten Track ab, oder pausiert/setzt fort,
@@ -1481,30 +1555,22 @@ class MainWindow(QMainWindow):
         self.player_bar.load_track(track.filepath, track.display_name, autoplay=True)
         self.track_list.setCurrentRow(target_index)
 
-    def _on_track_check_changed(self, item: QListWidgetItem):
-        """Aktiviert/deaktiviert den 'Auswahl loeschen'-Button je nachdem, ob
-        mindestens ein Track per Checkbox ausgewaehlt ist"""
-        any_checked = any(
-            self.track_list.item(row).checkState() == Qt.CheckState.Checked
-            for row in range(self.track_list.count())
-        )
-        self.btn_delete_tracks.setEnabled(any_checked and not self._is_special_folder(self.current_folder))
-
-    def _get_checked_tracks(self) -> list:
-        return [
-            self.track_list.item(row).data(Qt.ItemDataRole.UserRole)
-            for row in range(self.track_list.count())
-            if self.track_list.item(row).checkState() == Qt.CheckState.Checked
-        ]
+    def _get_selected_tracks(self) -> list:
+        """Die Tracks, auf die Aktionen wirken: im Mehrfachauswahl-Modus alle
+        markierten, sonst der aktuell ausgewaehlte"""
+        if self._multi_select_mode:
+            return [self.track_list.item(row).data(Qt.ItemDataRole.UserRole) for row in self._checked_rows()]
+        current_item = self.track_list.currentItem()
+        return [current_item.data(Qt.ItemDataRole.UserRole)] if current_item else []
 
     def _delete_selected_tracks(self):
-        """Loescht die per Checkbox ausgewaehlten Tracks von der SD-Karte und
+        """Loescht die ausgewaehlten Tracks von der SD-Karte und
         nummeriert die verbleibenden Tracks fortlaufend um (keine Luecken, wie
         von Tonuino benoetigt)"""
         if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
-        tracks = self._get_checked_tracks()
+        tracks = self._get_selected_tracks()
         if not tracks:
             return
 
@@ -1526,31 +1592,57 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Löschen: {e}")
 
-    def _move_current_track(self, delta: int):
-        """Verschiebt den aktuell (einzeln) ausgewaehlten Track um eine Position
-        nach oben (delta=-1) oder unten (delta=1) und benennt die Dateien auf
-        der SD-Karte entsprechend fortlaufend um."""
+    @staticmethod
+    def _reorder_with_selection(tracks: list, selected_ids: set, delta: int):
+        """Berechnet die neue Reihenfolge, wenn die markierten Tracks um eine
+        Position nach oben (delta=-1) oder unten (delta=1) verschoben werden.
+        Verstreute Markierungen werden dabei unter Beibehaltung ihrer
+        Reihenfolge zu einem Block zusammengezogen, der am obersten (bzw. beim
+        Verschieben nach unten untersten) markierten Track ansetzt und ueber den
+        naechsten nicht markierten Track springt. Gibt (neue_reihenfolge,
+        zeilen_der_markierten) zurueck."""
+        marked = [i for i, t in enumerate(tracks) if id(t) in selected_ids]
+        block = [tracks[i] for i in marked]
+        rest = [t for t in tracks if id(t) not in selected_ids]
+
+        if delta < 0:
+            anchor = marked[0]  # so viele nicht markierte Tracks stehen davor
+            insert_at = max(anchor - 1, 0)
+        else:
+            anchor = marked[-1] - (len(marked) - 1)
+            insert_at = min(anchor + 1, len(rest))
+
+        new_order = rest[:insert_at] + block + rest[insert_at:]
+        return new_order, list(range(insert_at, insert_at + len(block)))
+
+    def _move_selected_tracks(self, delta: int):
+        """Verschiebt die ausgewaehlten Tracks um eine Position nach oben
+        (delta=-1) oder unten (delta=1) und benennt die Dateien auf der
+        SD-Karte entsprechend fortlaufend um (siehe _reorder_with_selection)."""
         if not self.current_folder or self._is_special_folder(self.current_folder):
             return
 
-        current_item = self.track_list.currentItem()
-        if not current_item:
+        selected = self._get_selected_tracks()
+        if not selected:
             return
 
-        row = self.track_list.row(current_item)
-        target_row = row + delta
-        if target_row < 0 or target_row >= len(self.current_folder.tracks):
-            return
-
-        new_order = list(self.current_folder.tracks)
-        new_order[row], new_order[target_row] = new_order[target_row], new_order[row]
+        new_order, moved_rows = self._reorder_with_selection(
+            list(self.current_folder.tracks), {id(t) for t in selected}, delta
+        )
+        if new_order == list(self.current_folder.tracks):
+            return  # nichts verschiebbar (alles schon am Rand)
 
         self.player_bar.release_file()
         try:
             self.sd_card.reorder_tracks(self.current_folder, new_order)
             self._folder_name_cache.pop(self.current_folder.index, None)
             self._populate_track_list(self.current_folder)
-            self.track_list.setCurrentRow(target_row)
+            if self._multi_select_mode:
+                for row in moved_rows:
+                    self.track_list.item(row).setCheckState(Qt.CheckState.Checked)
+                self._update_track_action_buttons()
+            else:
+                self.track_list.setCurrentRow(moved_rows[0])
             self.status_bar.showMessage("Reihenfolge aktualisiert")
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler beim Umsortieren: {e}")
