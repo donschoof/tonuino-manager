@@ -410,12 +410,30 @@ class MainWindow(QMainWindow):
             logo_label.setPixmap(logo_pixmap.scaled(
                 40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             ))
+        logo_label.setMinimumHeight(60)
         title_row.addWidget(logo_label)
 
         title = QLabel("Tonuino-Manager")
         title.setObjectName("sidebarTitle")
         title.setFont(heading_font(14))
-        title_row.addWidget(title, 1)
+
+        version_label = QLabel(f"Version {__version__}")
+        # padding-left entspricht dem Padding von #sidebarTitle, damit beide bündig sind
+        version_label.setStyleSheet("color: #6c7086; font-size: 10px; padding-left: 15px;")
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        # Block wird neben dem Logo zentriert, sonst verteilt das Layout
+        # die ueberschuessige Hoehe zwischen Titel und Version
+        title.setStyleSheet("padding-top: 0px; padding-bottom: 0px;")
+        title.setFixedHeight(title.sizeHint().height() - 2)
+        version_label.setStyleSheet(
+            "color: #6c7086; font-size: 10px; padding-left: 15px; padding-top: 0px;"
+        )
+        title_col.addWidget(title)
+        title_col.addWidget(version_label)
+        title_row.addLayout(title_col, 1)
+        title_row.setAlignment(title_col, Qt.AlignmentFlag.AlignVCenter)
 
         layout.addLayout(title_row)
         
