@@ -143,7 +143,8 @@ def create_linux_package():
         shutil.rmtree(pkg_root)
 
     bin_dir = pkg_root / "usr" / "bin"
-    icon_dir = pkg_root / "usr" / "share" / "icons" / "hicolor" / "1024x1024" / "apps"
+    icons_root = pkg_root / "usr" / "share" / "icons" / "hicolor"
+    icon_dir = icons_root / "1024x1024" / "apps"
     desktop_dir = pkg_root / "usr" / "share" / "applications"
     debian_dir = pkg_root / "DEBIAN"
     for directory in (bin_dir, icon_dir, desktop_dir, debian_dir):
@@ -155,6 +156,13 @@ def create_linux_package():
     icon_src = Path("src/resources/icon.png")
     if icon_src.exists():
         shutil.copy2(icon_src, icon_dir / f"{package_name}.png")
+    # Kleinere Groessen (von tools/make_icons.py vorskaliert), damit Menues und
+    # Taskleisten eine passend scharfe Variante waehlen koennen
+    for small_icon in sorted(Path("packaging/linux-icons").glob("icon-*.png")):
+        size = small_icon.stem.split("-")[1]
+        target_dir = icons_root / f"{size}x{size}" / "apps"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(small_icon, target_dir / f"{package_name}.png")
 
     desktop_content = f"""[Desktop Entry]
 Type=Application

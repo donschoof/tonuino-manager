@@ -1,7 +1,7 @@
 """
 Erzeugt alle App-Icons aus einem einzigen, im Code gezeichneten Entwurf:
 src/resources/icon.png (1024 px, Titelleiste/Sidebar/Linux), icon.ico (Windows)
-und icon.icns (macOS). So sehen Programmdatei, Installer, Fenster und App
+icon.icns (macOS) sowie packaging/linux-icons/icon-<n>.png (Linux). So sehen Programmdatei, Installer, Fenster und App
 ueberall gleich aus.
 
 Aufruf (aus dem Projektordner):  python tools/make_icons.py
@@ -20,7 +20,12 @@ from PyQt6.QtGui import (
 from PIL import Image
 
 SIZE = 1024
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "resources")
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+OUT = os.path.join(ROOT, "src", "resources")
+# Vorskalierte PNGs fuer die Linux-Icon-Theme-Ordner (hicolor/<n>x<n>/apps),
+# siehe build_package.py - ausserhalb von src/, damit sie nicht in die App wandern
+LINUX_DIR = os.path.join(ROOT, "packaging", "linux-icons")
+LINUX_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
 
 
 def _tile(p: QPainter):
@@ -126,6 +131,9 @@ def main():
     master = Image.open(png).convert("RGBA")
     master.save(os.path.join(OUT, "icon.ico"), sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
     master.save(os.path.join(OUT, "icon.icns"))
+    os.makedirs(LINUX_DIR, exist_ok=True)
+    for size in LINUX_SIZES:
+        master.resize((size, size), Image.LANCZOS).save(os.path.join(LINUX_DIR, f"icon-{size}.png"))
     print("Icons geschrieben nach", os.path.abspath(OUT))
 
 
