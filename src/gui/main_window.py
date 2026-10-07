@@ -24,7 +24,7 @@ from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOL
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
-from core.rfid import RFIDReader, PLAYBACK_MODES
+from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
@@ -213,6 +213,110 @@ class TrackAddWorker(QThread):
         self.completed.emit(added)
 
 
+class RfidPoller(QThread):
+    """Fragt Reader- und Kartenstatus regelmaessig im Hintergrund ab - die
+    PC/SC-Aufrufe (Transmit, Reconnect) koennen sonst den GUI-Thread
+    spuerbar blockieren."""
+    status_changed = pyqtSignal(object)  # RfidStatus
+
+    def __init__(self, reader: RFIDReader, interval_ms: int = 500):
+        super().__init__()
+        self.reader = reader
+        self.interval_ms = interval_ms
+        self.paused = False  # z.B. im TonUINO-seriell-Modus
+        self._stopped = False
+
+    def stop(self):
+        self._stopped = True
+
+    def run(self):
+        while not self._stopped:
+            if not self.paused:
+                try:
+                    self.status_changed.emit(self.reader.poll())
+                except Exception as e:
+                    self.status_changed.emit(RfidStatus(reader="error", error=str(e)))
+            self.msleep(self.interval_ms)
+
+
+class TonuinoConnectWorker(QThread):
+    """Oeffnet die serielle Verbindung zum TonUINO - der Arduino resettet dabei
+    und die Verbindung wartet ca. 2 s, was im GUI-Thread die Oberflaeche einfriert."""
+    completed = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung
+
+    def __init__(self, tonuino: TonuinoSerial, port: str):
+        super().__init__()
+        self.tonuino = tonuino
+        self.port = port
+
+    def run(self):
+        try:
+            self.tonuino.connect(self.port)
+            self.completed.emit(True, "")
+        except TonuinoSerialError as e:
+            self.completed.emit(False, str(e))
+        except Exception as e:
+            self.completed.emit(False, f"Unerwarteter Fehler: {e}")
+
+
+class FolderNameWorker(QThread):
+    """Ermittelt die Ordnernamen (Album-Tag des ersten getaggten Tracks) im
+    Hintergrund - auf einer SD-Karte mit vielen untaggten Ordnern waeren das
+    sonst tausende Dateizugriffe im GUI-Thread direkt nach dem Oeffnen."""
+    name_found = pyqtSignal(int, str)  # Ordnernummer, Name
+    completed = pyqtSignal()
+
+    def __init__(self, folders: list, metadata_manager: MetadataManager):
+        super().__init__()
+        self.folders = folders
+        self.metadata_manager = metadata_manager
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        for folder in self.folders:
+            for track in sorted(folder.tracks, key=lambda t: t.index):
+                if self._cancelled:
+                    return
+                album = self.metadata_manager.read_metadata(track.filepath).album
+                if album:
+                    self.name_found.emit(folder.index, album)
+                    break
+        self.completed.emit()
+
+
+class TrackMetaWorker(QThread):
+    """Liest die Metadaten der Tracks eines Ordners genau einmal pro Datei
+    (Tags, Dauer und - nur vom ersten Track mit Cover - das Cover)."""
+    track_loaded = pyqtSignal(int, int, object, object)  # Generation, Zeile, TrackMetadata, Cover-Bytes|None
+    completed = pyqtSignal(int)  # Generation
+
+    def __init__(self, generation: int, tracks: list, metadata_manager: MetadataManager):
+        super().__init__()
+        self.generation = generation
+        self.tracks = tracks
+        self.metadata_manager = metadata_manager
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        cover_sent = False
+        for row, track in enumerate(self.tracks):
+            if self._cancelled:
+                return
+            metadata, cover = self.metadata_manager.read_metadata_and_cover(track.filepath)
+            if cover_sent:
+                cover = None
+            elif cover:
+                cover_sent = True
+            self.track_loaded.emit(self.generation, row, metadata, cover)
+        self.completed.emit(self.generation)
+
+
 class PurgeWorker(QThread):
     """Thread fuer das Bereinigen der SD-Karte (Whitelist-Purge), damit die
     UI waehrend der Dateisystem-Operationen nicht einfriert."""
@@ -305,6 +409,7 @@ class MainWindow(QMainWindow):
         self.tonuino_serial = TonuinoSerial()
         self._reader_mode = self.READER_MODE_ACR122U
         self._tonuino_worker: TonuinoCardWorker = None
+        self._tonuino_connect_worker: TonuinoConnectWorker = None
         self.scanner: SDCardScanner = None
         self._add_tracks_worker: TrackAddWorker = None
         self._purge_worker: PurgeWorker = None
@@ -312,6 +417,13 @@ class MainWindow(QMainWindow):
         self._update_downloader: UpdateDownloader = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
+        self._folder_name_labels = {}  # folder_index -> Namens-Label in der Ordnerliste
+        self._folder_name_worker: FolderNameWorker = None
+        self._track_meta_worker: TrackMetaWorker = None
+        self._track_meta_generation = 0
+        self._track_meta_total = 0.0
+        self._rfid_poller: RfidPoller = None
+        self._last_rfid_status: RfidStatus = None
         self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
         self._rfid_card_programmed = False  # fuer die Freischaltung des Loeschen-Icons
 
@@ -319,10 +431,10 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
         self._check_dependencies()
         
-        # RFID-Timer fuer regelmaessige Kartenpruefung
-        self.rfid_timer = QTimer()
-        self.rfid_timer.timeout.connect(self._check_rfid_card)
-        self.rfid_timer.start(500)
+        # Regelmaessige Reader-/Kartenpruefung im Hintergrund-Thread
+        self._rfid_poller = RfidPoller(self.rfid_reader)
+        self._rfid_poller.status_changed.connect(self._apply_rfid_status)
+        self._rfid_poller.start()
 
         # SD-Karten-Timer: erkennt, wenn die geoeffnete SD-Karte (z.B. per
         # USB/Kartenleser) waehrend der Nutzung entfernt wird, und setzt die
@@ -332,31 +444,10 @@ class MainWindow(QMainWindow):
         self.sd_card_timer.timeout.connect(self._check_sd_card_presence)
         self.sd_card_timer.start(1000)
 
-        # Automatische RFID-Reader-Verbindung beim Start
-        QTimer.singleShot(500, self._auto_connect_rfid)
-
         # Update-Pruefung beim Start (versetzt, damit sie nicht mit der
         # RFID-Verbindung um Systemressourcen konkurriert)
         QTimer.singleShot(1500, self._check_for_updates)
 
-    def _auto_connect_rfid(self):
-        """Verbindet automatisch mit dem ersten verfuegbaren RFID-Reader"""
-        if not self.rfid_reader.scard_available:
-            self._set_status_icon(self.reader_icon, "error")
-            return
-
-        readers = self.rfid_reader.get_readers()
-        if not readers:
-            self._set_status_icon(self.reader_icon, "neutral")
-            return
-
-        # Ersten Reader automatisch verbinden
-        if self.rfid_reader.connect(0):
-            self._set_status_icon(self.reader_icon, "ok")
-            self._update_card_status(present=False)
-        else:
-            self._set_status_icon(self.reader_icon, "error")
-    
     def _setup_ui(self):
         """Erstellt die Benutzeroberflaeche"""
         if sys.platform == "win32":
@@ -927,6 +1018,9 @@ class MainWindow(QMainWindow):
         if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
             self._add_tracks_worker.cancel()
 
+        self._stop_folder_name_worker()
+        self._stop_track_meta_worker()
+
         self.sd_card = None
         self.current_folder = None
         self._folder_name_cache.clear()
@@ -965,7 +1059,9 @@ class MainWindow(QMainWindow):
     def _populate_folder_list(self):
         """Fuellt die Ordner-Liste mit Ordnernummer-Badge und ermitteltem Namen,
         gefolgt von den (nicht editierbaren) Tonuio-Systemordnern mp3/advert"""
+        self._stop_folder_name_worker()
         self.folder_list.clear()
+        self._folder_name_labels.clear()
         self._update_welcome_text()
 
         if not self.sd_card:
@@ -979,7 +1075,9 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, idx)
             item.setSizeHint(QSize(0, 36))
             self.folder_list.addItem(item)
-            self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder, name))
+            widget = self._create_folder_item_widget(folder, name)
+            self._folder_name_labels[idx] = widget.name_label
+            self.folder_list.setItemWidget(item, widget)
 
         for special_name in SDCard.SPECIAL_FOLDER_NAMES:
             folder = self.sd_card.special_folders.get(special_name)
@@ -992,26 +1090,45 @@ class MainWindow(QMainWindow):
             self.folder_list.addItem(item)
             self.folder_list.setItemWidget(item, self._create_folder_item_widget(folder, folder.name))
 
+        # Namen der noch unbekannten Ordner im Hintergrund nachladen
+        pending = [f for i, f in self.sd_card.folders.items() if i not in self._folder_name_cache]
+        if pending:
+            self._folder_name_worker = FolderNameWorker(pending, self.metadata_manager)
+            self._folder_name_worker.name_found.connect(self._set_folder_name)
+            self._folder_name_worker.start()
+
+    def _stop_folder_name_worker(self):
+        worker = self._folder_name_worker
+        if worker is not None:
+            worker.cancel()
+            worker.wait()
+            self._folder_name_worker = None
+
+    def _set_folder_name(self, folder_index: int, name: str):
+        """Uebernimmt einen im Hintergrund ermittelten Ordnernamen in Cache,
+        Ordnerliste und (falls gerade offen) Kopfbereich."""
+        if self.sd_card is None or folder_index not in self.sd_card.folders:
+            return
+        self._folder_name_cache[folder_index] = name
+        label = self._folder_name_labels.get(folder_index)
+        if label is not None:
+            label.setText(name)
+        if self.current_folder is not None and not self.current_folder.is_special \
+                and self.current_folder.index == folder_index:
+            self._update_folder_title(self.current_folder)
+
     def _is_special_folder(self, folder: Optional[Folder]) -> bool:
         """True, wenn folder einer der nicht editierbaren Tonuio-Systemordner
         (mp3/advert) ist"""
         return folder is not None and folder.is_special
 
     def _resolve_folder_name(self, folder: Folder) -> str:
-        """Ermittelt den Anzeigenamen eines Ordners aus dem Album-Tag der ersten
-        Track-Datei (der Reihe nach), die einen hat. Fallback: 'Ordner NN'."""
+        """Anzeigename eines Ordners: der im Hintergrund aus dem Album-Tag
+        ermittelte Name (siehe FolderNameWorker), bis dahin 'Ordner NN'."""
         if folder.index in self._folder_name_cache:
             return self._folder_name_cache[folder.index]
 
-        name = f"Ordner {folder.index:02d}"
-        for track in sorted(folder.tracks, key=lambda t: t.index):
-            metadata = self.metadata_manager.read_metadata(track.filepath)
-            if metadata.album:
-                name = metadata.album
-                break
-
-        self._folder_name_cache[folder.index] = name
-        return name
+        return self._folder_name_cache.get(folder.index, f"Ordner {folder.index:02d}")
 
     def _create_folder_item_widget(self, folder: Folder, name: str) -> QWidget:
         """Erstellt das Zeilen-Widget fuer die Ordnerliste: Nummer-/Namens-Badge + Name.
@@ -1030,6 +1147,7 @@ class MainWindow(QMainWindow):
         name_label = QLabel(name)
         name_label.setObjectName("folderNameLabelSpecial" if folder.is_special else "folderNameLabel")
         row.addWidget(name_label, 1)
+        widget.name_label = name_label
 
         return widget
 
@@ -1055,42 +1173,39 @@ class MainWindow(QMainWindow):
                 self._on_folder_selected(item)
                 return
 
-    def _get_folder_cover_pixmap(self, folder: Folder) -> Optional[QPixmap]:
-        """Ermittelt das Cover eines Ordners: zuerst aus den ID3-Metadaten des ersten
-        Tracks (der Reihe nach) mit eingebettetem Cover, sonst Fallback auf eine
-        Cover-Datei im Ordner (Altbestand, z.B. cover.jpg von frueheren Versionen)."""
-        for track in sorted(folder.tracks, key=lambda t: t.index):
-            cover_bytes = self.metadata_manager.get_cover_bytes(track.filepath)
-            if cover_bytes:
-                pixmap = QPixmap()
-                if pixmap.loadFromData(cover_bytes):
-                    return pixmap
-
+    @staticmethod
+    def _folder_cover_file_pixmap(folder: Folder) -> Optional[QPixmap]:
+        """Fallback-Cover aus einer Cover-Datei im Ordner (Altbestand, z.B.
+        cover.jpg von frueheren Versionen). Das eingebettete Cover des ersten
+        Tracks liefert TrackMetaWorker und ersetzt dieses, sobald es gelesen ist."""
         if folder.cover_path:
             pixmap = QPixmap(folder.cover_path)
             if not pixmap.isNull():
                 return pixmap
-
         return None
 
     def _show_folder(self, folder: Folder):
         """Zeigt einen Ordner an"""
         self.stack.setCurrentWidget(self.folder_widget)
 
+        self._update_folder_title(folder)
+        # Der Pfad steht nicht mehr als Zeile da, bleibt aber als Tooltip erreichbar
+        for widget in (self.folder_title, self.folder_subtitle, self.folder_meta):
+            widget.setToolTip(f"Pfad: {folder.path}")
+
+        self.cover_label.set_cover(self._folder_cover_file_pixmap(folder))
+
+        self._populate_track_list(folder)
+        self._update_folder_action_buttons()
+
+    def _update_folder_title(self, folder: Folder):
+        """Titel und Untertitel im Kopfbereich"""
         self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
         subtitle = "Tonuino-Systemordner" if folder.is_special else f"Ordner {folder.index:02d}"
         self.folder_subtitle.setText(subtitle)
         # Hat der Ordner keinen eigenen Namen (aus den Tags), waere der Untertitel
         # nur eine Wiederholung des Titels
         self.folder_subtitle.setVisible(self.folder_title.text() != subtitle)
-        # Der Pfad steht nicht mehr als Zeile da, bleibt aber als Tooltip erreichbar
-        for widget in (self.folder_title, self.folder_subtitle, self.folder_meta):
-            widget.setToolTip(f"Pfad: {folder.path}")
-
-        self.cover_label.set_cover(self._get_folder_cover_pixmap(folder))
-
-        self._populate_track_list(folder)
-        self._update_folder_action_buttons()
 
     def _update_folder_action_buttons(self):
         """Schaltet die ordnerbezogenen Bearbeiten-Aktionen frei/aus - Tonuio-
@@ -1108,15 +1223,11 @@ class MainWindow(QMainWindow):
         # Hinzufuegen/Loeschen/Umsortieren aendern (Umbenennung auf fortlaufende
         # Nummern), der aktuell geladene Pfad waere dann ungueltig
         self.player_bar.stop_and_clear()
+        self._stop_track_meta_worker()
 
         self.track_list.blockSignals(True)
         self.track_list.clear()
         for track in folder.tracks:
-            metadata = self.metadata_manager.read_metadata(track.filepath)
-            track.title = metadata.title
-            track.artist = metadata.artist
-            track.album = metadata.album
-
             item = QListWidgetItem(track.display_name)
             item.setData(Qt.ItemDataRole.UserRole, track)
             # ItemIsUserCheckable ist standardmaessig gesetzt und wuerde den Kreis
@@ -1129,16 +1240,68 @@ class MainWindow(QMainWindow):
             self.track_list.addItem(item)
         self.track_list.blockSignals(False)
 
+        self._track_meta_total = 0.0
         self._update_folder_meta(folder)
         self._refresh_track_row_icons()
         self._update_track_action_buttons()
 
-    def _update_folder_meta(self, folder: Folder):
-        """Infozeile unter dem Ordnernamen: Anzahl der Tracks und Gesamtdauer"""
-        count = len(folder.tracks)
-        total = sum(
-            self.metadata_manager.read_metadata(t.filepath).duration or 0.0 for t in folder.tracks
+        # Tags, Dauer und Cover im Hintergrund lesen (je Datei einmal)
+        self._track_meta_worker = TrackMetaWorker(
+            self._track_meta_generation, list(folder.tracks), self.metadata_manager
         )
+        self._track_meta_worker.track_loaded.connect(self._on_track_meta_loaded)
+        self._track_meta_worker.completed.connect(self._on_track_meta_completed)
+        self._track_meta_worker.start()
+
+    def _stop_track_meta_worker(self):
+        """Bricht das Metadaten-Lesen ab. Die Generation verwirft bereits
+        eingereihte Signale des alten Workers."""
+        self._track_meta_generation += 1
+        worker = self._track_meta_worker
+        if worker is not None:
+            worker.cancel()
+            worker.wait()
+            self._track_meta_worker = None
+
+    def _release_files(self):
+        """Gibt alle Dateien frei, bevor sie umbenannt/geloescht/ueberschrieben
+        werden: Player entladen und Hintergrund-Leser stoppen (unter Windows
+        halten beide die Dateien sonst gesperrt)."""
+        self._stop_folder_name_worker()
+        self._stop_track_meta_worker()
+        self.player_bar.release_file()
+
+    def _on_track_meta_loaded(self, generation: int, row: int, metadata, cover_bytes):
+        if generation != self._track_meta_generation or row >= self.track_list.count():
+            return
+        item = self.track_list.item(row)
+        track = item.data(Qt.ItemDataRole.UserRole)
+        track.title = metadata.title
+        track.artist = metadata.artist
+        track.album = metadata.album
+        item.setText(track.display_name)
+        self._track_meta_total += metadata.duration or 0.0
+
+        folder = self.current_folder
+        if folder is None or folder.is_special:
+            return
+        # Tracks treffen der Reihe nach ein: der erste mit Album-Tag benennt den Ordner
+        if metadata.album and folder.index not in self._folder_name_cache:
+            self._set_folder_name(folder.index, metadata.album)
+        if cover_bytes:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(cover_bytes):
+                self.cover_label.set_cover(pixmap)
+
+    def _on_track_meta_completed(self, generation: int):
+        if generation == self._track_meta_generation and self.current_folder is not None:
+            self._update_folder_meta(self.current_folder)
+
+    def _update_folder_meta(self, folder: Folder):
+        """Infozeile unter dem Ordnernamen: Anzahl der Tracks und Gesamtdauer
+        (die Dauer kommt, sobald die Metadaten gelesen sind)"""
+        count = len(folder.tracks)
+        total = self._track_meta_total
         parts = [f"{count} Track" if count == 1 else f"{count} Tracks"]
         if total >= 1:
             if total < 60:
@@ -1269,7 +1432,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        self.player_bar.release_file()
+        self._release_files()
         self.btn_purge_card.setEnabled(False)
         self.status_bar.showMessage("SD-Karte wird bereinigt...")
 
@@ -1332,7 +1495,7 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        self.player_bar.release_file()
+        self._release_files()
         try:
             self.sd_card.delete_folder(folder.index)
             self._folder_name_cache.pop(folder.index, None)
@@ -1456,7 +1619,7 @@ class MainWindow(QMainWindow):
         if not filepath:
             return
 
-        self.player_bar.release_file()
+        self._release_files()
 
         try:
             updated = self._apply_cover(self.current_folder.tracks, filepath)
@@ -1498,7 +1661,7 @@ class MainWindow(QMainWindow):
         from gui.track_editor import TrackEditorDialog
         
         if self.player_bar.is_current(track.filepath):
-            self.player_bar.release_file()
+            self._release_files()
 
         metadata = self.metadata_manager.read_metadata(track.filepath)
         cover_pixmap = None
@@ -1759,7 +1922,7 @@ class MainWindow(QMainWindow):
         if not confirm_action(self, "Tracks löschen", message):
             return
 
-        self.player_bar.release_file()
+        self._release_files()
         try:
             self.sd_card.delete_tracks(self.current_folder, tracks)
             self._folder_name_cache.pop(self.current_folder.index, None)
@@ -1809,7 +1972,7 @@ class MainWindow(QMainWindow):
         if new_order == list(self.current_folder.tracks):
             return  # nichts verschiebbar (alles schon am Rand)
 
-        self.player_bar.release_file()
+        self._release_files()
         try:
             self.sd_card.reorder_tracks(self.current_folder, new_order)
             self._folder_name_cache.pop(self.current_folder.index, None)
@@ -1830,6 +1993,8 @@ class MainWindow(QMainWindow):
         (RFID-Leser), beide teilen sich denselben Bereich in der Sidebar."""
         self._reader_mode = mode
         is_tonuino = mode == self.READER_MODE_TONUINO
+        self._rfid_poller.paused = is_tonuino
+        self._last_rfid_status = None  # beim Zurueckwechseln neu anzeigen
         self.acr122u_status_widget.setVisible(not is_tonuino)
         self.tonuino_status_widget.setVisible(is_tonuino)
         if is_tonuino and self.tonuino_port_combo.count() == 0:
@@ -1871,17 +2036,20 @@ class MainWindow(QMainWindow):
             return
 
         self.tonuino_status_label.setText("Verbinde...")
-        self.setEnabled(False)
-        QApplication.processEvents()
-        try:
-            self.tonuino_serial.connect(port)
-        except TonuinoSerialError as e:
-            self.setEnabled(True)
-            self.tonuino_status_label.setText(f"Verbindung fehlgeschlagen: {e}")
-            QMessageBox.warning(self, "Fehler", str(e))
+        self.btn_tonuino_connect.setEnabled(False)
+        self._tonuino_connect_worker = TonuinoConnectWorker(self.tonuino_serial, port)
+        self._tonuino_connect_worker.completed.connect(
+            lambda ok, message, port=port: self._on_tonuino_connected(ok, message, port)
+        )
+        self._tonuino_connect_worker.start()
+
+    def _on_tonuino_connected(self, success: bool, message: str, port: str):
+        self.btn_tonuino_connect.setEnabled(True)
+        if not success:
+            self.tonuino_status_label.setText(f"Verbindung fehlgeschlagen: {message}")
+            QMessageBox.warning(self, "Fehler", message)
             return
 
-        self.setEnabled(True)
         self.btn_tonuino_connect.setText("Trennen")
         self.tonuino_status_label.setText(f"Verbunden mit {port}.")
         self._update_program_buttons()
@@ -1923,69 +2091,35 @@ class MainWindow(QMainWindow):
             self._rfid_card_programmed = False
             self._update_program_buttons()
 
-    def _check_rfid_card(self):
-        """Prueft periodisch Reader- und Kartenstatus und aktualisiert die Anzeige automatisch"""
+    def _apply_rfid_status(self, status: RfidStatus):
+        """Uebernimmt das Ergebnis des RFID-Pollers in die Anzeige"""
         if self._reader_mode != self.READER_MODE_ACR122U:
             return
-        if not self.rfid_reader.scard_available:
+        if status == self._last_rfid_status:
             return
+        self._last_rfid_status = status
 
-        # Reader nicht verbunden - automatisch (wieder) verbinden
-        if not self.rfid_reader._reader_available:
-            readers = self.rfid_reader.get_readers()
-            if not readers:
-                self._set_status_icon(self.reader_icon, "neutral")
-                self._update_card_status(present=False)
-                return
+        self._set_status_icon(self.reader_icon, status.reader)
 
-            try:
-                if self.rfid_reader.connect(0):
-                    self._set_status_icon(self.reader_icon, "ok")
-            except Exception:
-                pass
-            return
-
-        # Reader war verbunden - pruefen ob er noch physisch angeschlossen ist
-        # (z.B. nicht per USB abgezogen wurde). Das ist unabhaengig davon, ob
-        # gerade eine Karte aufliegt.
-        if not self.rfid_reader.is_reader_present():
-            self.rfid_reader.disconnect()
-            self._set_status_icon(self.reader_icon, "neutral")
-            self._update_card_status(present=False)
-            return
-
-        # Reader verbunden - Karte pruefen
-        try:
-            if not self.rfid_reader.is_card_present():
-                self._update_card_status(present=False)
-                return
-
-            uid = self.rfid_reader.get_card_uid()
-            if not uid:
-                self._set_status_icon(self.card_icon, "warning")
-                self._set_status_icon(self.programmed_icon, "neutral")
-                self._rfid_card_present = False
-                self._rfid_card_programmed = False
-                self._update_program_buttons()
-                return
-
-            self._set_status_icon(self.card_icon, "ok")
-            self._rfid_card_present = True
-
-            card_data = self.rfid_reader.read_tonuino_card()
-            self._rfid_card_programmed = bool(card_data)
-            if card_data:
-                self._set_status_icon(self.programmed_icon, "ok")
-            else:
-                self._set_status_icon(self.programmed_icon, "warning")
-
-            self._update_program_buttons()
-
-        except Exception as e:
+        if status.error:
             # Fehler nur in der Statusleiste anzeigen, nicht als Popup
-            self.status_bar.showMessage(f"RFID-Fehler: {e}")
+            self.status_bar.showMessage(f"RFID-Fehler: {status.error}")
+
+        if status.card == "ok":
+            self._set_status_icon(self.card_icon, "ok")
+            self._set_status_icon(self.programmed_icon, "ok" if status.programmed else "warning")
+            self._rfid_card_present = True
+            self._rfid_card_programmed = status.programmed
+            self._update_program_buttons()
+        elif status.card == "warning":
+            self._set_status_icon(self.card_icon, "warning")
+            self._set_status_icon(self.programmed_icon, "neutral")
+            self._rfid_card_present = False
+            self._rfid_card_programmed = False
+            self._update_program_buttons()
+        else:
             self._update_card_status(present=False)
-    
+
     RFID_MODES = PLAYBACK_MODES
 
     # WRITECARD-Modi fuer den TonUINO-seriell-Weg (siehe core.tonuino_serial) -
@@ -2478,6 +2612,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Wird beim Schliessen aufgerufen"""
         self.player_bar.stop()
+        if self._rfid_poller is not None:
+            self._rfid_poller.stop()
+            self._rfid_poller.wait(3000)
         self._stop_background_threads()
         if self.rfid_reader:
             self.rfid_reader.disconnect()
@@ -2502,6 +2639,8 @@ class MainWindow(QMainWindow):
                 worker.wait(3000)
 
         # Scan, Bereinigung und Update-Pruefung sind nicht abbrechbar - kurz auslaufen lassen
-        for worker in (self.scanner, self._purge_worker, self._update_checker):
+        self._stop_folder_name_worker()
+        self._stop_track_meta_worker()
+        for worker in (self.scanner, self._purge_worker, self._update_checker, self._tonuino_connect_worker):
             if worker is not None and worker.isRunning():
                 worker.wait(3000)

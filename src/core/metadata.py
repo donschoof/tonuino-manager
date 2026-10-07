@@ -64,24 +64,27 @@ class MetadataManager:
 
     def read_metadata(self, filepath: str) -> TrackMetadata:
         """Liest Metadaten aus einer MP3-Datei"""
-        metadata = TrackMetadata()
-        
-        if not self._mutagen_available:
-            return metadata
-        
-        try:
-            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, TRCK, TCON, TDRC, APIC
+        return self.read_metadata_and_cover(filepath)[0]
 
+    def read_metadata_and_cover(self, filepath: str) -> Tuple[TrackMetadata, Optional[bytes]]:
+        """Liest Metadaten und rohe Cover-Daten (APIC) in einem Durchgang -
+        die Datei wird nur einmal geoeffnet (auf einer SD-Karte ist jeder
+        Zugriff teuer)."""
+        metadata = TrackMetadata()
+        cover_bytes = None
+
+        if not self._mutagen_available:
+            return metadata, cover_bytes
+
+        try:
             audio = self._open_mp3(filepath)
 
-            # Laenge
             if audio.info:
                 metadata.duration = audio.info.length
-            
-            # ID3-Tags
+
             if audio.tags:
                 tags = audio.tags
-                
+
                 if 'TIT2' in tags:
                     metadata.title = str(tags['TIT2'])
                 if 'TPE1' in tags:
@@ -102,19 +105,19 @@ class MetadataManager:
                     metadata.genre = str(tags['TCON'])
                 if 'TDRC' in tags:
                     metadata.year = str(tags['TDRC'])[:4]
-                
-                # Cover
+
                 for key in tags.keys():
                     if key.startswith('APIC'):
                         metadata.has_cover = True
                         metadata.cover_mime = tags[key].mime
+                        cover_bytes = tags[key].data
                         break
-                        
+
         except Exception as e:
             print(f"Fehler beim Lesen der Metadaten: {e}")
-        
-        return metadata
-    
+
+        return metadata, cover_bytes
+
     def write_metadata(
         self,
         filepath: str,

@@ -3,7 +3,10 @@ RFID-Karten-Verwaltung fuer Tonuino
 Unterstuetzt ACR122U NFC/RFID-Lesegeraet
 """
 
+import functools
 import struct
+import threading
+import time
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
@@ -48,6 +51,26 @@ PLAYBACK_MODES = [
 ]
 
 
+def _locked(method):
+    """Fuehrt die Methode unter RFIDReader.lock aus, damit der Status-Poller
+    nicht mitten in eine Kommandofolge (Typ erkennen, authentifizieren,
+    schreiben) funkt."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self.lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+@dataclass
+class RfidStatus:
+    """Momentaufnahme von Reader und Karte (Ergebnis von RFIDReader.poll())"""
+    reader: str = "neutral"  # "ok" | "neutral" (nicht angeschlossen) | "error"
+    card: str = "none"  # "none" | "warning" (nicht lesbar) | "ok"
+    programmed: bool = False  # Karte enthaelt eine Tonuino-Konfiguration
+    error: str = ""
+
+
 class CardType(Enum):
     """Unterstuetzte Kartentypen (entspricht den PICC-Typen aus TonUINO-TNG/chip_card.cpp:
     MIFARE_MINI, MIFARE_1K, MIFARE_4K, MIFARE_UL)"""
@@ -79,6 +102,11 @@ class RFIDReader:
         self._hresult = None
         self._reader_available = False
         self._direct_mode = False
+        self._reader = None
+        # Der Status-Poller (Hintergrund-Thread) und die Programmier-/Loesch-
+        # Aktionen der GUI sprechen dieselbe Verbindung an - wer eine
+        # zusammenhaengende Folge von Kommandos sendet, haelt dieses Lock.
+        self.lock = threading.RLock()
         self._scard_available = self._check_scard()
     
     def _check_scard(self) -> bool:
@@ -187,6 +215,7 @@ class RFIDReader:
             return False
         return str(self._reader) in self.get_readers()
     
+    @_locked
     def is_card_present(self) -> bool:
         """Prueft ob eine Karte auf dem Reader liegt.
 
@@ -239,6 +268,52 @@ class RFIDReader:
                 pass
             return False
     
+    def poll(self) -> RfidStatus:
+        """Ein Pruef-Durchlauf fuer die Statusanzeige: verbindet bei Bedarf
+        (wieder) mit dem ersten Reader, prueft ob er noch angeschlossen ist und
+        liest, falls eine Karte aufliegt, deren Tonuino-Konfiguration. Blockiert
+        je nach Reader spuerbar - nicht im GUI-Thread aufrufen."""
+        status = RfidStatus()
+        if not self._scard_available:
+            status.reader = "error"
+            return status
+
+        with self.lock:
+            if not self._reader_available:
+                if not self.get_readers():
+                    return status
+                try:
+                    status.reader = "ok" if self.connect(0) else "error"
+                except Exception:
+                    status.reader = "error"
+                return status
+
+            # Reader war verbunden - pruefen ob er noch physisch angeschlossen
+            # ist (z.B. nicht per USB abgezogen), unabhaengig von einer Karte
+            if not self.is_reader_present():
+                self.disconnect()
+                return status
+
+            status.reader = "ok"
+            try:
+                if not self.is_card_present():
+                    return status
+                if not self.get_card_uid():
+                    status.card = "warning"
+                    return status
+                status.card = "ok"
+                # Ein einzelner Lesefehler (Karte wird gerade bewegt) soll nicht
+                # sofort als "nicht programmiert" angezeigt werden - einmal wiederholen
+                card_data = self.read_tonuino_card()
+                if card_data is None:
+                    time.sleep(0.05)
+                    card_data = self.read_tonuino_card()
+                status.programmed = card_data is not None
+            except Exception as e:
+                status.card = "none"
+                status.error = str(e)
+            return status
+
     def _get_status(self):
         """Holt den Status des Readers"""
         from smartcard.scard import (
@@ -541,6 +616,7 @@ class RFIDReader:
             print(f"Fehler beim Schreiben der Tonuino-Karte: {e}")
             return False
 
+    @_locked
     def write_tonuino_card(
         self,
         folder_index: int,
@@ -559,11 +635,13 @@ class RFIDReader:
         block_data = self._build_tonuino_block(folder_index, mode, special, special2)
         return self._write_tonuino_block(block_data, key)
 
+    @_locked
     def write_admin_card(self, key: List[int] = None) -> bool:
         """Programmiert eine TonUINO-Admin-Karte (folder=0, mode=admin_card)"""
         block_data = self._build_tonuino_block(0, self.ADMIN_CARD_MODE, 0, 0)
         return self._write_tonuino_block(block_data, key)
 
+    @_locked
     def erase_tonuino_card(self, key: List[int] = None) -> bool:
         """Loescht die Tonuino-Konfiguration einer Karte (ueberschreibt den
         Datenblock mit Nullen, passend zum erkannten Kartentyp) - die Karte
@@ -571,6 +649,7 @@ class RFIDReader:
         keinen gueltigen Cookie mehr)."""
         return self._write_tonuino_block(bytes(16), key)
 
+    @_locked
     def read_tonuino_card(self, key: List[int] = None) -> Optional[TonuinoCardData]:
         """Liest die Tonuino-Kartenkonfiguration, passend zum erkannten Kartentyp"""
         if not self._reader_available:
