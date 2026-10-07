@@ -155,6 +155,96 @@ QPushButton:disabled {
     border-color: #313244;
 }
 
+/* === Slider (Player: Fortschritt, Lautstaerke) === */
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #45475a;
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background: #89b4fa;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #cdd6f4;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+
+QSlider::handle:horizontal:hover {
+    background: #ffffff;
+}
+
+/* deaktiviert: nichts gefuellt, Griff abgedunkelt */
+QSlider::sub-page:horizontal:disabled {
+    background: #313244;
+}
+
+QSlider::groove:horizontal:disabled {
+    background: #313244;
+}
+
+QSlider::handle:horizontal:disabled {
+    background: #45475a;
+}
+
+/* Lautstaerke: schlank und zurueckhaltend, Griff erst beim Ueberfahren sichtbar */
+QSlider#volumeSlider {
+    background: transparent;
+}
+
+QSlider#volumeSlider::groove:horizontal {
+    height: 3px;
+    background: #45475a;
+    border-radius: 1px;
+}
+
+QSlider#volumeSlider::sub-page:horizontal {
+    background: #cdd6f4;
+    border-radius: 1px;
+}
+
+QSlider#volumeSlider::handle:horizontal {
+    background: transparent;
+    width: 10px;
+    height: 10px;
+    margin: -4px 0;
+    border-radius: 5px;
+}
+
+/* "hovered" setzt ClickSlider beim Ueberfahren/Ziehen (die Pseudo-Klasse :hover
+   vor ::handle versteht Qt nicht und faerbt sonst den ganzen Slider) */
+QSlider#volumeSlider[hovered="true"]::handle:horizontal {
+    background: #ffffff;
+}
+
+/* stumm: Leiste abgedunkelt */
+QSlider#volumeSlider[muted="true"]::sub-page:horizontal {
+    background: #585b70;
+}
+
+QSlider#volumeSlider[muted="true"][hovered="true"]::handle:horizontal {
+    background: #9399b2;
+}
+
+QLabel:disabled {
+    color: #585b70;
+}
+
+/* Flache Player-Steuerelemente (Zurueck/Play/Weiter) ohne Button-Hintergrund */
+QPushButton#transportButton,
+QPushButton#transportButton:hover,
+QPushButton#transportButton:pressed,
+QPushButton#transportButton:disabled {
+    background: transparent;
+    border: none;
+    padding: 0px;
+}
+
 QPushButton#primaryButton {
     background-color: #89b4fa;
     color: #1e1e2e;
@@ -469,10 +559,22 @@ QStatusBar {
 }
 
 /* === Label === */
-QLabel#coverLabel {
-    background-color: #313244;
-    border: 2px solid #45475a;
-    border-radius: 8px;
+/* === Ordner-Kopfbereich (Name, Ordnernummer, Infozeile) === */
+QLabel#folderTitle {
+    font-size: 24pt;
+    font-weight: bold;
+    color: #cdd6f4;
+}
+
+QLabel#folderSubtitle {
+    font-size: 15pt;
+    color: #89b4fa;
+}
+
+QLabel#folderMeta {
+    font-size: 9pt;
+    font-weight: bold;
+    color: #7f849c;
 }
 
 QLabel#titleLabel {
@@ -484,6 +586,23 @@ QLabel#titleLabel {
 QLabel#subtitleLabel {
     font-size: 10pt;
     color: #a6adc8;
+}
+
+/* Inhaltsblock des Players: durchsichtig, damit die Karte dahinter sichtbar bleibt */
+QWidget#playerContent {
+    background: transparent;
+}
+
+/* === Player: Now-Playing-Anzeige === */
+QLabel#playerTitle {
+    font-size: 11pt;
+    font-weight: bold;
+    color: #cdd6f4;
+}
+
+QLabel#playerMeta {
+    font-size: 9pt;
+    color: #9399b2;
 }
 
 /* === Frame === */

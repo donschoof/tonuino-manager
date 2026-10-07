@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QSplitter, QInputDialog,
     QAbstractItemView, QProgressDialog, QApplication,
-    QComboBox, QMenuBar
+    QComboBox, QMenuBar, QStyle, QStyleOptionViewItem
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QEvent, QPoint
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QEvent, QPoint, QRect
 from PyQt6.QtGui import QCursor, QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
 
 from core import __version__
@@ -26,7 +26,8 @@ from core.metadata import MetadataManager
 from core.rfid import RFIDReader, PLAYBACK_MODES
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
-from gui.audio_player import AudioPlayerBar
+from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
+from gui.cover_edit import CoverEditWidget
 from gui.update_dialog import UpdateDialog
 from gui.title_bar import TitleBar
 
@@ -82,6 +83,37 @@ class ClickableLabel(QLabel):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+
+class HoverListWidget(QListWidget):
+    """QListWidget, das meldet, ueber welcher Zeile die Maus steht (-1 = keine).
+    Dient den Abspielen-Symbolen der Track-Liste, die beim Ueberfahren erscheinen."""
+    hovered_row_changed = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self._hover_row = -1
+        # Position des letzten Mausklicks (Viewport-Koordinaten): itemClicked
+        # liefert sie nicht mit, wird aber fuer die Klick-Zone der Symbole gebraucht
+        self.last_press_pos = QPoint()
+
+    def _set_hover_row(self, row: int):
+        if row != self._hover_row:
+            self._hover_row = row
+            self.hovered_row_changed.emit(row)
+
+    def mouseMoveEvent(self, event):
+        self._set_hover_row(self.indexAt(event.position().toPoint()).row())
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        self.last_press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hover_row(-1)
+        super().leaveEvent(event)
 
 
 class SDCardScanner(QThread):
@@ -247,6 +279,9 @@ class MainWindow(QMainWindow):
     READER_MODE_ACR122U = "acr122u"
     READER_MODE_TONUINO = "tonuino"
 
+    # Kantenlaenge (px) des Ordner-Covers im Kopfbereich
+    FOLDER_COVER_SIZE = 170
+
     # Breite des Fensterrands (px), an dem unter Windows die Groesse geaendert wird
     RESIZE_BORDER = 6
 
@@ -260,6 +295,8 @@ class MainWindow(QMainWindow):
         # - siehe gui/title_bar.py. Auf macOS/Linux bleibt die normale Menueleiste.
         self._title_bar = None
         self._multi_select_mode = False
+        self._hover_row = -1
+        self._row_icons = {}
         if sys.platform == "win32":
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setMinimumSize(1200, 800)
@@ -654,7 +691,7 @@ class MainWindow(QMainWindow):
         """Erstellt den Hauptbereich"""
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(20, 10, 20, 20)
         layout.setSpacing(16)
 
         self.welcome_widget = QWidget()
@@ -674,53 +711,78 @@ class MainWindow(QMainWindow):
         
         self.folder_widget = QWidget()
         folder_layout = QVBoxLayout(self.folder_widget)
-        
-        header_layout = QHBoxLayout()
-        self.folder_title = QLabel("Ordner")
-        self.folder_title.setObjectName("titleLabel")
-        header_layout.addWidget(self.folder_title)
-        
-        header_layout.addStretch()
-        
+        folder_layout.setContentsMargins(9, 0, 9, 9)  # oben kein zusaetzlicher Abstand
+
+        # Player ganz oben: Karte in voller Breite, Inhalt zentriert (siehe AudioPlayerBar)
+        self.player_bar = AudioPlayerBar()
+        self.player_bar.track_info_provider = self._player_track_info
+        self.player_bar.prev_clicked.connect(self._play_previous_track)
+        self.player_bar.next_clicked.connect(self._play_next_track)
+        self.player_bar.playback_changed.connect(self._refresh_track_row_icons)
+        self.player_bar.playback_changed.connect(self._update_player_navigation)
+        self.player_bar.play_requested.connect(self._play_selected_track)
+
+        folder_layout.addWidget(self.player_bar)
+
+        # Kopfbereich wie in Apple Music: grosses Cover links, rechts Name, Ordner-
+        # nummer und Infozeile, darunter (unten buendig mit dem Cover) die Aktionen.
+        # Feste Hoehe (= Cover), damit die Stretches im Textblock das Layout nicht
+        # vertikal aufblaehen.
+        folder_header = QWidget()
+        folder_header.setFixedHeight(self.FOLDER_COVER_SIZE)
+        header_layout = QHBoxLayout(folder_header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(24)
+
+        self.cover_label = CoverEditWidget(self.FOLDER_COVER_SIZE)
+        self.cover_label.clicked.connect(self._set_folder_cover)
+        header_layout.addWidget(self.cover_label)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(2)
+        info_col.addStretch(1)
+
+        self.folder_title = ElidedLabel("Ordner")
+        self.folder_title.setObjectName("folderTitle")
+        self.folder_title.setFixedHeight(40)
+        info_col.addWidget(self.folder_title)
+
+        self.folder_subtitle = QLabel()
+        self.folder_subtitle.setObjectName("folderSubtitle")
+        info_col.addWidget(self.folder_subtitle)
+
+        self.folder_meta = QLabel()
+        self.folder_meta.setObjectName("folderMeta")
+        info_col.addWidget(self.folder_meta)
+
+        info_col.addStretch(1)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+
         btn_add_tracks = QPushButton(" Tracks hinzufügen")
         btn_add_tracks.setObjectName("primaryButton")
-        btn_add_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Add
+        btn_add_tracks.setIcon(self._icon_from_glyph("\ue145", color="#1e1e2e"))  # Add
+        btn_add_tracks.setFixedHeight(38)
+        btn_add_tracks.setMinimumWidth(170)
         btn_add_tracks.clicked.connect(self._add_tracks)
         self.btn_add_tracks = btn_add_tracks
-        header_layout.addWidget(btn_add_tracks)
+        actions.addWidget(btn_add_tracks)
 
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("dangerButton")
-        btn_delete_folder.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
+        btn_delete_folder.setIcon(self._icon_from_glyph("\ue872", color="#1e1e2e"))  # Delete
+        btn_delete_folder.setFixedHeight(38)
+        btn_delete_folder.setMinimumWidth(170)
         btn_delete_folder.clicked.connect(self._delete_folder)
         self.btn_delete_folder = btn_delete_folder
-        header_layout.addWidget(btn_delete_folder)
+        actions.addWidget(btn_delete_folder)
 
-        folder_layout.addLayout(header_layout)
-        
-        info_layout = QHBoxLayout()
-        
-        self.cover_label = ClickableLabel()
-        self.cover_label.setObjectName("coverLabel")
-        self.cover_label.setFixedSize(150, 150)
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
-        self.cover_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cover_label.setToolTip("Klicken um das Cover zu ändern")
-        self.cover_label.clicked.connect(self._set_folder_cover)
-        info_layout.addWidget(self.cover_label)
-        
-        self.folder_info = QLabel()
-        self.folder_info.setObjectName("subtitleLabel")
-        info_layout.addWidget(self.folder_info)
+        actions.addStretch(1)
+        info_col.addLayout(actions)
 
-        self.player_bar = AudioPlayerBar()
-        self.player_bar.setMinimumWidth(280)
-        self.player_bar.prev_clicked.connect(self._play_previous_track)
-        self.player_bar.next_clicked.connect(self._play_next_track)
-        info_layout.addWidget(self.player_bar, 1)
-
-        folder_layout.addLayout(info_layout)
+        header_layout.addLayout(info_col, 1)
+        folder_layout.addWidget(folder_header)
 
         track_header_layout = QHBoxLayout()
         track_header_layout.addWidget(QLabel("Tracks:"))
@@ -748,13 +810,6 @@ class MainWindow(QMainWindow):
         self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
         track_header_layout.addWidget(self.btn_move_track_down)
 
-        self.btn_play_track = QPushButton(" Abspielen")
-        self.btn_play_track.setIcon(self._icon_from_glyph("", color="#cdd6f4"))  # Play
-        self.btn_play_track.setToolTip("Ausgewählten Track anhören")
-        self.btn_play_track.setEnabled(False)
-        self.btn_play_track.clicked.connect(self._play_selected_track)
-        track_header_layout.addWidget(self.btn_play_track)
-
         self.btn_delete_tracks = QPushButton(" Track löschen")
         self.btn_delete_tracks.setObjectName("dangerButton")
         self.btn_delete_tracks.setIcon(self._icon_from_glyph("", color="#1e1e2e"))  # Delete
@@ -764,7 +819,9 @@ class MainWindow(QMainWindow):
 
         folder_layout.addLayout(track_header_layout)
 
-        self.track_list = QListWidget()
+        self.track_list = HoverListWidget()
+        self.track_list.setIconSize(QSize(18, 18))
+        self.track_list.hovered_row_changed.connect(self._on_track_hover_changed)
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
         self.track_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.track_list.currentItemChanged.connect(self._on_track_current_changed)
@@ -1014,32 +1071,16 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.folder_widget)
 
         self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
+        subtitle = "Tonuino-Systemordner" if folder.is_special else f"Ordner {folder.index:02d}"
+        self.folder_subtitle.setText(subtitle)
+        # Hat der Ordner keinen eigenen Namen (aus den Tags), waere der Untertitel
+        # nur eine Wiederholung des Titels
+        self.folder_subtitle.setVisible(self.folder_title.text() != subtitle)
+        # Der Pfad steht nicht mehr als Zeile da, bleibt aber als Tooltip erreichbar
+        for widget in (self.folder_title, self.folder_subtitle, self.folder_meta):
+            widget.setToolTip(f"Pfad: {folder.path}")
 
-        pixmap = self._get_folder_cover_pixmap(folder)
-        if pixmap:
-            scaled = pixmap.scaled(
-                150, 150,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self.cover_label.setPixmap(scaled)
-        else:
-            self.cover_label.setText("Kein Cover\n(klicken zum Aendern)")
-
-        if folder.is_special:
-            info_text = (
-                f"Tonuio-Systemordner: {folder.name}\n"
-                f"Anzahl Tracks: {folder.track_count}\n"
-                f"Pfad: {folder.path}"
-            )
-        else:
-            info_text = (
-                f"Ordner-Nummer: {folder.index:02d}\n"
-                f"Anzahl Tracks: {folder.track_count}\n"
-                f"Pfad: {folder.path}"
-            )
-
-        self.folder_info.setText(info_text)
+        self.cover_label.set_cover(self._get_folder_cover_pixmap(folder))
 
         self._populate_track_list(folder)
         self._update_folder_action_buttons()
@@ -1081,8 +1122,25 @@ class MainWindow(QMainWindow):
             self.track_list.addItem(item)
         self.track_list.blockSignals(False)
 
+        self._update_folder_meta(folder)
+        self._refresh_track_row_icons()
         self._update_track_action_buttons()
-    
+
+    def _update_folder_meta(self, folder: Folder):
+        """Infozeile unter dem Ordnernamen: Anzahl der Tracks und Gesamtdauer"""
+        count = len(folder.tracks)
+        total = sum(
+            self.metadata_manager.read_metadata(t.filepath).duration or 0.0 for t in folder.tracks
+        )
+        parts = [f"{count} Track" if count == 1 else f"{count} Tracks"]
+        if total >= 1:
+            if total < 60:
+                parts.append(f"{int(total)} Sek.")
+            else:
+                minutes = round(total / 60)
+                parts.append(f"{minutes // 60} Std. {minutes % 60} Min." if minutes >= 60 else f"{minutes} Min.")
+        self.folder_meta.setText(" · ".join(parts))
+
     def _create_new_folder(self):
         """Erstellt einen neuen Ordner"""
         if not self.sd_card:
@@ -1385,31 +1443,32 @@ class MainWindow(QMainWindow):
 
         self.player_bar.release_file()
 
-        import tempfile
-
         try:
-            from PIL import Image
-            img = Image.open(filepath).convert("RGB")
-            img = img.resize((300, 300), Image.Resampling.LANCZOS)
-
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-            os.close(tmp_fd)
-            img.save(tmp_path, "JPEG", quality=90)
-
-            try:
-                updated = sum(
-                    1 for track in self.current_folder.tracks
-                    if self.metadata_manager.set_cover(track.filepath, tmp_path)
-                )
-            finally:
-                os.remove(tmp_path)
-
+            updated = self._apply_cover(self.current_folder.tracks, filepath)
             self._show_folder(self.current_folder)
             self.status_bar.showMessage(f"Cover für {updated} Track(s) aktualisiert")
 
         except Exception as e:
             QMessageBox.warning(self, "Fehler", f"Fehler: {e}")
-    
+
+    def _apply_cover(self, tracks: list, image_path: str) -> int:
+        """Schreibt das Bild (auf 300x300 JPEG verkleinert) als Cover in die ID3-
+        Metadaten der Tracks. Gibt die Anzahl erfolgreich aktualisierter Tracks zurueck."""
+        import tempfile
+        from PIL import Image
+
+        img = Image.open(image_path).convert("RGB")
+        img = img.resize((300, 300), Image.Resampling.LANCZOS)
+
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(tmp_fd)
+        img.save(tmp_path, "JPEG", quality=90)
+
+        try:
+            return sum(1 for track in tracks if self.metadata_manager.set_cover(track.filepath, tmp_path))
+        finally:
+            os.remove(tmp_path)
+
     def _on_track_double_clicked(self, item: QListWidgetItem):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
         if self._is_special_folder(self.current_folder):
@@ -1427,7 +1486,13 @@ class MainWindow(QMainWindow):
             self.player_bar.release_file()
 
         metadata = self.metadata_manager.read_metadata(track.filepath)
-        dialog = TrackEditorDialog(metadata, self)
+        cover_pixmap = None
+        cover_bytes = self.metadata_manager.get_cover_bytes(track.filepath)
+        if cover_bytes:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(cover_bytes):
+                cover_pixmap = pixmap
+        dialog = TrackEditorDialog(metadata, self, cover_pixmap=cover_pixmap)
         
         if dialog.exec() == TrackEditorDialog.DialogCode.Accepted:
             new_metadata = dialog.get_metadata()
@@ -1441,6 +1506,11 @@ class MainWindow(QMainWindow):
                 genre=new_metadata.genre,
                 year=new_metadata.year
             )
+            if dialog.cover_path:
+                try:
+                    self._apply_cover([track], dialog.cover_path)
+                except Exception as e:
+                    QMessageBox.warning(self, "Fehler", f"Cover konnte nicht gesetzt werden: {e}")
             self._show_folder(self.current_folder)
 
     def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
@@ -1457,8 +1527,8 @@ class MainWindow(QMainWindow):
         """Setzt Aktivierung und Beschriftung der Track-Aktionen. Im
         Mehrfachauswahl-Modus wirken Loeschen und Nach oben/unten auf alle
         markierten Tracks, sonst auf den aktuell ausgewaehlten Track.
-        Abspielen bleibt fuer Systemordner (mp3/advert) erlaubt, Bearbeiten
-        (Umsortieren, Loeschen, Mehrfachauswahl) nicht."""
+        In Systemordnern (mp3/advert) ist Bearbeiten (Umsortieren, Loeschen,
+        Mehrfachauswahl) nicht erlaubt, Abspielen schon (Symbole in der Liste)."""
         editable = bool(self.current_folder) and not self._is_special_folder(self.current_folder)
         has_current = self.track_list.currentItem() is not None
         if self._multi_select_mode:
@@ -1476,7 +1546,8 @@ class MainWindow(QMainWindow):
         self.btn_move_track_up.setEnabled(has_target and editable)
         self.btn_move_track_down.setEnabled(has_target and editable)
         self.btn_delete_tracks.setEnabled(has_target and editable)
-        self.btn_play_track.setEnabled(has_current)
+        # Ist noch nichts geladen, kann Play den ausgewaehlten Track starten
+        self.player_bar.set_idle_playable(bool(self._get_selected_tracks()))
 
     def _set_multi_select_mode(self, enabled: bool):
         """Schaltet die Mehrfachauswahl ein/aus (wie in Apple Mail): Eingeschaltet
@@ -1504,28 +1575,119 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.CheckStateRole, None)
         self.track_list.blockSignals(False)
 
+        self._refresh_track_row_icons()
         self._update_track_action_buttons()
 
+    def _play_icon_rect(self, item: QListWidgetItem) -> QRect:
+        """Bereich des Wiedergabe-Symbols in der Zeile (Viewport-Koordinaten).
+        Im Einzelmodus ist das der Symbolbereich links, im Mehrfachauswahl-Modus
+        der Streifen zwischen Auswahlkreis und Textanfang. Die Positionen
+        kommen vom Style (nicht fest verdrahtet); der Streifen ist bewusst
+        grosszuegig, weil der Style die Elemente rechts vom Kreis etwas
+        weiter links meldet, als sie tatsaechlich gezeichnet werden."""
+        opt = QStyleOptionViewItem()
+        opt.initFrom(self.track_list)
+        row_rect = self.track_list.visualItemRect(item)
+        opt.rect = row_rect
+        opt.decorationSize = QSize(18, 18)
+        opt.font = self.track_list.font()
+        opt.text = item.text()
+        opt.features = (
+            QStyleOptionViewItem.ViewItemFeature.HasDecoration
+            | QStyleOptionViewItem.ViewItemFeature.HasDisplay
+        )
+        style = self.track_list.style()
+
+        if not self._multi_select_mode:
+            icon = style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, opt, self.track_list)
+            return icon.adjusted(-8, -8, 8, 8)
+
+        opt.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        opt.checkState = item.checkState()
+        indicator = style.subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator, opt, self.track_list)
+        text = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, self.track_list)
+        return QRect(indicator.right() + 1, row_rect.top(), text.left() + 8 - indicator.right() - 1, row_rect.height())
+
     def _on_track_clicked(self, item: QListWidgetItem):
-        """Im Mehrfachauswahl-Modus markiert/entmarkiert ein Klick den Track"""
+        """Ein Klick auf das Wiedergabe-Symbol startet/pausiert den Track. Sonst
+        markiert/entmarkiert ein Klick den Track im Mehrfachauswahl-Modus
+        (Kreis und restliche Zeile), im Einzelmodus waehlt er ihn nur aus."""
+        track = item.data(Qt.ItemDataRole.UserRole)
+        if track and self._play_icon_rect(item).contains(self.track_list.last_press_pos):
+            self.player_bar.toggle_track(track.filepath, track.display_name)
+            return
         if not self._multi_select_mode:
             return
         checked = item.checkState() == Qt.CheckState.Checked
         item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
         self._update_track_action_buttons()
 
+    def _player_track_info(self, filepath: str) -> TrackInfo:
+        """Anzeigedaten fuer den Player: Titel, Interpret, Album und eingebettetes
+        Cover aus den ID3-Tags des Tracks"""
+        metadata = self.metadata_manager.read_metadata(filepath)
+        cover = None
+        cover_bytes = self.metadata_manager.get_cover_bytes(filepath)
+        if cover_bytes:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(cover_bytes):
+                cover = pixmap
+        return TrackInfo(title=metadata.title, artist=metadata.artist, album=metadata.album, cover=cover)
+
+    def _update_player_navigation(self):
+        """Zurueck/Weiter im Player nur aktivieren, wenn es relativ zum geladenen
+        Track in dieser Richtung noch einen Track im Ordner gibt (kein Wrap-around)"""
+        tracks = self.current_folder.tracks if self.current_folder else []
+        current_path = self.player_bar.current_path
+        index = next((i for i, t in enumerate(tracks) if t.filepath == current_path), None)
+        if index is None:
+            self.player_bar.set_navigation_enabled(False, False)
+        else:
+            self.player_bar.set_navigation_enabled(index > 0, index < len(tracks) - 1)
+
     def _play_selected_track(self):
-        """Spielt den aktuell ausgewaehlten Track ab, oder pausiert/setzt fort,
-        falls er bereits im Player geladen ist"""
-        current_item = self.track_list.currentItem()
-        if not current_item:
-            return
+        """Play im Player ohne geladenen Track: spielt den in der Liste
+        ausgewaehlten Track (im Mehrfachauswahl-Modus den ersten markierten)"""
+        tracks = self._get_selected_tracks()
+        if tracks:
+            self.player_bar.load_track(tracks[0].filepath, tracks[0].display_name, autoplay=True)
 
-        track = current_item.data(Qt.ItemDataRole.UserRole)
-        if not track:
-            return
+    def _on_track_hover_changed(self, row: int):
+        self._hover_row = row
+        self._refresh_track_row_icons()
 
-        self.player_bar.toggle_track(track.filepath, track.display_name)
+    def _row_icon(self, kind: str) -> QIcon:
+        """Symbole der Track-Zeilen (gecacht): play/pause beim Ueberfahren,
+        speaker beim geladenen Track, blank haelt den Platz frei"""
+        if kind not in self._row_icons:
+            glyphs = {"play": "\ue037", "pause": "\ue034", "speaker": "\ue050"}
+            if kind == "blank":
+                pixmap = QPixmap(18, 18)
+                pixmap.fill(Qt.GlobalColor.transparent)
+                self._row_icons[kind] = QIcon(pixmap)
+            else:
+                self._row_icons[kind] = self._icon_from_glyph(glyphs[kind], color="#89b4fa", size=18)
+        return self._row_icons[kind]
+
+    def _refresh_track_row_icons(self):
+        """Setzt je Zeile das Symbol wie in Apple Music: ueberfahrene Zeile zeigt
+        Play (beim gerade spielenden Track Pause), der geladene Track sonst einen
+        Lautsprecher. Funktioniert auch im Mehrfachauswahl-Modus (Symbol neben dem
+        Auswahlkreis)."""
+        playing = self.player_bar.is_playing()
+        for row in range(self.track_list.count()):
+            item = self.track_list.item(row)
+            track = item.data(Qt.ItemDataRole.UserRole)
+            is_current = bool(track) and self.player_bar.is_current(track.filepath)
+            hovered = row == self._hover_row
+
+            if hovered:
+                kind = "pause" if is_current and playing else "play"
+            elif is_current:
+                kind = "speaker"
+            else:
+                kind = "blank"
+            item.setIcon(self._row_icon(kind))
 
     def _play_previous_track(self):
         self._play_relative_track(-1)

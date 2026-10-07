@@ -2,26 +2,30 @@
 Track-Editor Dialog fuer Tonuino-Manager
 """
 
+from typing import Optional
+
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QSpinBox, QPushButton, QLabel,
-    QFileDialog, QMessageBox, QFrame
+    QLineEdit, QSpinBox, QPushButton, QFileDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
-from core.metadata import TrackMetadata, MetadataManager
+from core.metadata import TrackMetadata
+from gui.cover_edit import CoverEditWidget
 
 
 class TrackEditorDialog(QDialog):
     """Dialog zum Bearbeiten von Track-Metadaten"""
     
-    def __init__(self, metadata: TrackMetadata, parent=None):
+    def __init__(self, metadata: TrackMetadata, parent=None, cover_pixmap: Optional[QPixmap] = None):
         super().__init__(parent)
         self.setWindowTitle("Track bearbeiten")
         self.setMinimumWidth(400)
         
         self.metadata = metadata
+        self.cover_pixmap = cover_pixmap
+        # Pfad eines neu gewaehlten Cover-Bildes; leer = Cover unveraendert lassen
         self.cover_path = ""
         
         self._setup_ui()
@@ -32,22 +36,11 @@ class TrackEditorDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         
-        # Cover-Vorschau
-        cover_frame = QFrame()
-        cover_frame.setObjectName("cardFrame")
-        cover_layout = QVBoxLayout(cover_frame)
-        
-        self.cover_label = QLabel("Kein Cover")
-        self.cover_label.setFixedSize(150, 150)
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setObjectName("coverLabel")
-        cover_layout.addWidget(self.cover_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        btn_load_cover = QPushButton("Cover laden")
-        btn_load_cover.clicked.connect(self._load_cover)
-        cover_layout.addWidget(btn_load_cover)
-        
-        layout.addWidget(cover_frame)
+        # Cover: zeigt das echte Cover (oder einen Platzhalter); ein Klick, den ein
+        # Hover-Overlay ankuendigt, waehlt ein neues Bild
+        self.cover_edit = CoverEditWidget(150)
+        self.cover_edit.clicked.connect(self._load_cover)
+        layout.addWidget(self.cover_edit, alignment=Qt.AlignmentFlag.AlignHCenter)
         
         # Formular
         form_layout = QFormLayout()
@@ -104,8 +97,7 @@ class TrackEditorDialog(QDialog):
         self.genre_edit.setText(self.metadata.genre)
         self.year_edit.setText(self.metadata.year)
         
-        if self.metadata.has_cover:
-            self.cover_label.setText("Cover vorhanden")
+        self.cover_edit.set_cover(self.cover_pixmap)
     
     def _load_cover(self):
         """Laedt ein Cover-Bild"""
@@ -117,15 +109,10 @@ class TrackEditorDialog(QDialog):
         )
         
         if filepath:
-            self.cover_path = filepath
             pixmap = QPixmap(filepath)
             if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    150, 150,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self.cover_label.setPixmap(scaled)
+                self.cover_path = filepath
+                self.cover_edit.set_cover(pixmap)
     
     def get_metadata(self) -> TrackMetadata:
         """Gibt die bearbeiteten Metadaten zurueck"""
