@@ -235,6 +235,38 @@ class SDCard:
         remaining = [t for t in folder.tracks if t.filepath not in delete_paths]
         self.reorder_tracks(folder, remaining)
 
+    @classmethod
+    def _rename_second_step(cls, temp_paths: List[Path], finals: List[Path], originals: List[Path]):
+        """Zweiter Umbenennungsschritt (temporaer -> final). Bei einem Fehler
+        gehen alle Eintraege zurueck auf ihre urspruenglichen Namen."""
+        try:
+            cls._rename_all_or_restore(temp_paths, finals)
+        except OSError:
+            for temp_path, original in zip(temp_paths, originals):
+                try:
+                    temp_path.rename(original)
+                except OSError:
+                    pass
+            raise
+
+    @staticmethod
+    def _rename_all_or_restore(sources: List[Path], targets: List[Path]):
+        """Benennt sources[i] -> targets[i] um. Schlaegt eine Umbenennung fehl,
+        werden die bereits umbenannten Eintraege zurueckbenannt und der Fehler
+        weitergereicht."""
+        done = []
+        try:
+            for index, (source, target) in enumerate(zip(sources, targets)):
+                source.rename(target)
+                done.append(index)
+        except OSError:
+            for index in reversed(done):
+                try:
+                    targets[index].rename(sources[index])
+                except OSError:
+                    pass
+            raise
+
     def reorder_tracks(self, folder: Folder, new_order: List[Track]):
         """Bringt die Tracks eines Ordners in die angegebene Reihenfolge und
         benennt die Dateien entsprechend fortlaufend um (001.mp3, 002.mp3, ...).
@@ -244,22 +276,22 @@ class SDCard:
         # Schritt 1: alle betroffenen Dateien auf temporaere Namen umbenennen,
         # damit sich Ziel- und Quellname beim Umnummerieren nicht ueberschneiden
         # koennen (z.B. beim Vertauschen von 001.mp3 und 002.mp3).
-        temp_paths = []
-        for track in new_order:
-            temp_path = folder_path / f".tmp_{track.filename}"
-            Path(track.filepath).rename(temp_path)
-            temp_paths.append(temp_path)
-
         # Schritt 2: von den temporaeren Namen auf die finalen, luecken- und
         # kollisionsfreien Namen umbenennen.
-        updated_tracks = []
-        for position, (track, temp_path) in enumerate(zip(new_order, temp_paths), start=1):
-            final_name = f"{position:03d}.mp3"
-            final_path = folder_path / final_name
-            temp_path.rename(final_path)
+        # Schlaegt dabei etwas fehl (Karte gezogen, Sperre), werden die
+        # Originalnamen soweit moeglich wiederhergestellt, statt .tmp_*-Dateien
+        # liegen zu lassen.
+        originals = [Path(t.filepath) for t in new_order]
+        temp_paths = [folder_path / f".tmp_{t.filename}" for t in new_order]
+        finals = [folder_path / f"{pos:03d}.mp3" for pos in range(1, len(new_order) + 1)]
 
+        self._rename_all_or_restore(originals, temp_paths)
+        self._rename_second_step(temp_paths, finals, originals)
+
+        updated_tracks = []
+        for position, (track, final_path) in enumerate(zip(new_order, finals), start=1):
             track.index = position
-            track.filename = final_name
+            track.filename = final_path.name
             track.filepath = str(final_path)
             updated_tracks.append(track)
 
@@ -273,17 +305,15 @@ class SDCard:
         (z.B. beim Verschieben von 03 nach 01)."""
         ordered = [self.folders[i] for i in sorted(self.folders.keys())]
 
-        temp_paths = []
-        for folder in ordered:
-            temp_path = self.path / f".tmp_{Path(folder.path).name}"
-            Path(folder.path).rename(temp_path)
-            temp_paths.append(temp_path)
+        originals = [Path(f.path) for f in ordered]
+        temp_paths = [self.path / f".tmp_{p.name}" for p in originals]
+        finals = [self.path / f"{pos:02d}" for pos in range(1, len(ordered) + 1)]
+
+        self._rename_all_or_restore(originals, temp_paths)
+        self._rename_second_step(temp_paths, finals, originals)
 
         new_folders: Dict[int, Folder] = {}
-        for position, (folder, temp_path) in enumerate(zip(ordered, temp_paths), start=1):
-            final_path = self.path / f"{position:02d}"
-            temp_path.rename(final_path)
-
+        for position, (folder, final_path) in enumerate(zip(ordered, finals), start=1):
             folder.index = position
             folder.path = str(final_path)
             self._scan_tracks(folder)

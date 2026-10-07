@@ -3,6 +3,7 @@ Hauptfenster des Tonuino-Managers
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -118,7 +119,7 @@ class HoverListWidget(QListWidget):
 
 class SDCardScanner(QThread):
     """Thread fuer das Scannen der SD-Karte"""
-    finished = pyqtSignal(bool)
+    completed = pyqtSignal(bool)
     progress = pyqtSignal(int)
     
     def __init__(self, sd_card: SDCard):
@@ -132,12 +133,12 @@ class SDCardScanner(QThread):
             self.msleep(50)
             success = self.sd_card.scan()
             self.progress.emit(100)
-            self.finished.emit(success)
+            self.completed.emit(success)
         except Exception as e:
             print(f"Scan-Fehler: {e}")
             import traceback
             traceback.print_exc()
-            self.finished.emit(False)
+            self.completed.emit(False)
 
 
 class TrackAddWorker(QThread):
@@ -146,7 +147,7 @@ class TrackAddWorker(QThread):
     progress = pyqtSignal(int, int, str)  # aktueller Index, Gesamtzahl, Dateiname
     track_added = pyqtSignal(object)  # neuer Track
     error = pyqtSignal(str, str)  # Dateiname, Fehlermeldung
-    finished = pyqtSignal(int)  # Anzahl erfolgreich hinzugefuegter Tracks
+    completed = pyqtSignal(int)  # Anzahl erfolgreich hinzugefuegter Tracks
 
     def __init__(self, folder: Folder, filepaths: list,
                  audio_converter: AudioConverter, metadata_manager: MetadataManager):
@@ -187,24 +188,20 @@ class TrackAddWorker(QThread):
                         continue
                     self.audio_converter.convert_to_mp3(filepath, str(dest_path))
                 else:
-                    import shutil
                     shutil.copy2(filepath, dest_path)
 
-                source_metadata = self.metadata_manager.read_metadata(filepath)
-                if source_metadata.title:
-                    self.metadata_manager.write_metadata(
-                        str(dest_path),
-                        title=source_metadata.title,
-                        artist=source_metadata.artist,
-                        album=source_metadata.album,
-                        track_number=next_number
-                    )
+                # Tags stehen jetzt in der Zieldatei (bei Konvertierung von FFmpeg
+                # uebernommen, bei MP3 mitkopiert) - dort lesen statt in der Quelle,
+                # die ggf. kein MP3 ist und von mutagen.mp3 nicht gelesen werden kann.
+                metadata = self.metadata_manager.read_metadata(str(dest_path))
+                if metadata.title:
+                    self.metadata_manager.write_metadata(str(dest_path), track_number=next_number)
 
                 new_track = Track(
                     index=next_number,
                     filename=dest_filename,
                     filepath=str(dest_path),
-                    title=source_metadata.title
+                    title=metadata.title
                 )
                 self._used_numbers.add(next_number)
                 self.track_added.emit(new_track)
@@ -213,13 +210,13 @@ class TrackAddWorker(QThread):
             except Exception as e:
                 self.error.emit(os.path.basename(filepath), str(e))
 
-        self.finished.emit(added)
+        self.completed.emit(added)
 
 
 class PurgeWorker(QThread):
     """Thread fuer das Bereinigen der SD-Karte (Whitelist-Purge), damit die
     UI waehrend der Dateisystem-Operationen nicht einfriert."""
-    finished = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung (leer bei Erfolg)
+    completed = pyqtSignal(bool, str)  # Erfolg, Fehlermeldung (leer bei Erfolg)
 
     def __init__(self, sd_card: SDCard):
         super().__init__()
@@ -228,9 +225,9 @@ class PurgeWorker(QThread):
     def run(self):
         try:
             self.sd_card.purge()
-            self.finished.emit(True, "")
+            self.completed.emit(True, "")
         except Exception as e:
-            self.finished.emit(False, str(e))
+            self.completed.emit(False, str(e))
 
 
 TONUINO_IDLE_HINT = (
@@ -244,7 +241,7 @@ class TonuinoCardWorker(QThread):
     (WRITECARD-Befehl), damit die UI waehrend der - potenziell langen, da die
     Firmware ohne eigenes Timeout auf das Auflegen der Karte wartet - Antwort
     nicht einfriert."""
-    finished = pyqtSignal(bool, str)  # Erfolg, Meldungstext (Firmware-Text bzw. Fehler)
+    completed = pyqtSignal(bool, str)  # Erfolg, Meldungstext (Firmware-Text bzw. Fehler)
 
     def __init__(self, tonuino: TonuinoSerial, mode: int,
                  folder: Optional[int] = None, special: Optional[int] = None,
@@ -261,13 +258,13 @@ class TonuinoCardWorker(QThread):
             message = self.tonuino.write_card(
                 self.mode, folder=self.folder, special=self.special, special2=self.special2
             )
-            self.finished.emit(True, message)
+            self.completed.emit(True, message)
         except TonuinoWriteCancelled as e:
-            self.finished.emit(False, str(e))
+            self.completed.emit(False, str(e))
         except (TonuinoSerialError, ValueError) as e:
-            self.finished.emit(False, str(e))
+            self.completed.emit(False, str(e))
         except Exception as e:
-            self.finished.emit(False, f"Unerwarteter Fehler: {e}")
+            self.completed.emit(False, f"Unerwarteter Fehler: {e}")
 
 
 class MainWindow(QMainWindow):
@@ -308,6 +305,11 @@ class MainWindow(QMainWindow):
         self.tonuino_serial = TonuinoSerial()
         self._reader_mode = self.READER_MODE_ACR122U
         self._tonuino_worker: TonuinoCardWorker = None
+        self.scanner: SDCardScanner = None
+        self._add_tracks_worker: TrackAddWorker = None
+        self._purge_worker: PurgeWorker = None
+        self._update_checker: UpdateChecker = None
+        self._update_downloader: UpdateDownloader = None
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
         self._rfid_card_present = False  # fuer die Freischaltung von "Karte programmieren"
@@ -844,11 +846,13 @@ class MainWindow(QMainWindow):
     
     def _check_dependencies(self):
         """Prueft verfuegbare Abhaengigkeiten"""
+        missing = []
         if not self.audio_converter.is_available:
-            self.status_bar.showMessage("FFmpeg nicht gefunden - Konvertierung nicht möglich")
-
+            missing.append("FFmpeg nicht gefunden - Konvertierung nicht möglich")
         if not self.rfid_reader.scard_available:
-            self.status_bar.showMessage("pyscard nicht installiert - RFID nicht verfügbar")
+            missing.append("pyscard nicht installiert - RFID nicht verfügbar")
+        if missing:
+            self.status_bar.showMessage(" | ".join(missing))
 
     def _open_sd_card(self):
         """Oeffnet eine SD-Karte"""
@@ -878,7 +882,7 @@ class MainWindow(QMainWindow):
 
         self.scanner = SDCardScanner(self.sd_card)
         self.scanner.progress.connect(self._open_sd_dialog.setValue)
-        self.scanner.finished.connect(self._on_scan_finished)
+        self.scanner.completed.connect(self._on_scan_finished)
         self.scanner.start()
 
     def _on_scan_finished(self, success: bool):
@@ -920,6 +924,9 @@ class MainWindow(QMainWindow):
         ist - verhindert, dass weitere Aktionen auf die nicht mehr
         vorhandenen Pfade zugreifen und dabei Dateisystem-Fehler ins Log
         schreiben."""
+        if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
+            self._add_tracks_worker.cancel()
+
         self.sd_card = None
         self.current_folder = None
         self._folder_name_cache.clear()
@@ -948,8 +955,8 @@ class MainWindow(QMainWindow):
             self.welcome_info_label.setText("Wähle links einen Ordner aus.")
             return
         self.welcome_info_label.setText(
-            "Oeffne eine SD-Karte um zu beginnen.\n\n"
-            "- Verwalte deine Tonuio-Ordner\n"
+            "Öffne eine SD-Karte, um zu beginnen.\n\n"
+            "- Verwalte deine Tonuino-Ordner\n"
             "- Füge Musik hinzu mit automatischer Konvertierung\n"
             "- Bearbeite Metadaten und Cover\n"
             "- Programmiere RFID-Karten direkt"
@@ -1280,12 +1287,15 @@ class MainWindow(QMainWindow):
         self._purge_dialog.show()
 
         self._purge_worker = PurgeWorker(self.sd_card)
-        self._purge_worker.finished.connect(self._on_purge_finished)
+        self._purge_worker.completed.connect(self._on_purge_finished)
         self._purge_worker.start()
 
     def _on_purge_finished(self, success: bool, error_message: str):
         """Wird aufgerufen, wenn der Bereinigungs-Thread fertig ist"""
         self._purge_dialog.close()
+
+        if self.sd_card is None:
+            return  # Karte wurde waehrend des Bereinigens entfernt (UI ist schon zurueckgesetzt)
 
         if not success:
             self.btn_purge_card.setEnabled(True)
@@ -1386,7 +1396,7 @@ class MainWindow(QMainWindow):
         self._add_tracks_worker.progress.connect(self._on_add_tracks_progress)
         self._add_tracks_worker.track_added.connect(self._on_track_added)
         self._add_tracks_worker.error.connect(self._on_add_tracks_error)
-        self._add_tracks_worker.finished.connect(self._on_add_tracks_finished)
+        self._add_tracks_worker.completed.connect(self._on_add_tracks_finished)
         self._add_tracks_dialog.canceled.connect(self._add_tracks_worker.cancel)
 
         self._add_tracks_worker.start()
@@ -1396,6 +1406,8 @@ class MainWindow(QMainWindow):
         self._add_tracks_dialog.setValue(current)
 
     def _on_track_added(self, track: Track):
+        if self.current_folder is None:
+            return
         self.current_folder.tracks.append(track)
         self.current_folder.tracks.sort(key=lambda t: t.index)
 
@@ -1404,6 +1416,9 @@ class MainWindow(QMainWindow):
 
     def _on_add_tracks_finished(self, added_count: int):
         self._add_tracks_dialog.close()
+
+        if self.current_folder is None:
+            return  # Karte wurde waehrend des Hinzufuegens entfernt (UI ist schon zurueckgesetzt)
 
         self._folder_name_cache.pop(self.current_folder.index, None)
         self._show_folder(self.current_folder)
@@ -2258,7 +2273,7 @@ class MainWindow(QMainWindow):
         )
 
         self._tonuino_worker = TonuinoCardWorker(self.tonuino_serial, mode, folder, special, special2)
-        self._tonuino_worker.finished.connect(self._on_tonuino_write_finished)
+        self._tonuino_worker.completed.connect(self._on_tonuino_write_finished)
         self._tonuino_worker.start()
 
     def _on_tonuino_cancel_write_clicked(self):
@@ -2349,7 +2364,7 @@ class MainWindow(QMainWindow):
         """Manuelle Update-Pruefung ueber Hilfe > Nach Updates suchen - meldet
         im Gegensatz zum automatischen Start-Check explizit, ob ein Update
         gefunden wurde, keins vorhanden ist, oder die Pruefung fehlgeschlagen ist."""
-        if getattr(self, "_update_checker", None) is not None and self._update_checker.isRunning():
+        if self._update_checker is not None and self._update_checker.isRunning():
             return
         self._run_update_check(manual=True)
 
@@ -2404,7 +2419,7 @@ class MainWindow(QMainWindow):
 
         self._update_downloader = UpdateDownloader(info)
         self._update_downloader.progress.connect(self._on_update_download_progress)
-        self._update_downloader.finished.connect(self._on_update_download_finished)
+        self._update_downloader.completed.connect(self._on_update_download_finished)
         self._update_downloader.error.connect(self._on_update_download_error)
         self._update_download_dialog.canceled.connect(self._update_downloader.cancel)
 
@@ -2463,8 +2478,30 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Wird beim Schliessen aufgerufen"""
         self.player_bar.stop()
+        self._stop_background_threads()
         if self.rfid_reader:
             self.rfid_reader.disconnect()
         if self.tonuino_serial.is_connected:
             self.tonuino_serial.disconnect()
         event.accept()
+
+    def _stop_background_threads(self):
+        """Beendet laufende Hintergrund-Threads, bevor das Fenster verschwindet -
+        sonst endet der Prozess mit 'QThread: Destroyed while thread is still
+        running' bzw. der Serial-Thread liest von einem schon geschlossenen Port."""
+        if self._tonuino_worker is not None and self._tonuino_worker.isRunning():
+            try:
+                self.tonuino_serial.cancel_write()
+            except TonuinoSerialError:
+                pass
+            self._tonuino_worker.wait(3000)
+
+        for worker in (self._add_tracks_worker, self._update_downloader):
+            if worker is not None and worker.isRunning():
+                worker.cancel()
+                worker.wait(3000)
+
+        # Scan, Bereinigung und Update-Pruefung sind nicht abbrechbar - kurz auslaufen lassen
+        for worker in (self.scanner, self._purge_worker, self._update_checker):
+            if worker is not None and worker.isRunning():
+                worker.wait(3000)
