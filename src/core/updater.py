@@ -137,7 +137,7 @@ class UpdateDownloader(QThread):
     Download eine bewusste Nutzeraktion ist."""
 
     progress = pyqtSignal(int, int)  # gelesene Bytes, Gesamtgroesse (0 = unbekannt)
-    finished = pyqtSignal(str)  # lokaler Dateipfad
+    completed = pyqtSignal(str)  # lokaler Dateipfad
     error = pyqtSignal(str)
 
     def __init__(self, info: UpdateInfo):
@@ -172,7 +172,7 @@ class UpdateDownloader(QThread):
                 os.remove(dest_path)
                 return
 
-            self.finished.emit(dest_path)
+            self.completed.emit(dest_path)
         except Exception as e:
             if os.path.exists(dest_path):
                 try:

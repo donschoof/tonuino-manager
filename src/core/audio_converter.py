@@ -6,9 +6,15 @@ Konvertiert verschiedene Audio-Formate nach MP3 via FFmpeg
 import os
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional, Callable
 from enum import Enum
+
+
+# Unter Windows sonst kurz aufblitzende Konsolenfenster bei jedem FFmpeg-Aufruf
+# (die App laeuft als GUI ohne eigene Konsole).
+_SUBPROCESS_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 
 class AudioFormat(Enum):
@@ -61,7 +67,8 @@ class AudioConverter:
                 [self.ffmpeg_path, "-version"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                creationflags=_SUBPROCESS_FLAGS
             )
             self._available = result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -87,7 +94,8 @@ class AudioConverter:
                 [self.ffmpeg_path, "-i", filepath],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                creationflags=_SUBPROCESS_FLAGS
             )
             
             output = result.stderr  # FFmpeg schreibt Info nach stderr
@@ -151,23 +159,34 @@ class AudioConverter:
                 progress_callback(100.0)
             return True
         
+        # Tags (Titel/Interpret/Album/...) und ein eingebettetes Cover werden
+        # mitgenommen: ohne sie haetten konvertierte Tracks weder Namen noch Cover
+        # (Ordnername und Ordner-Cover werden aus den Tags des Tracks gelesen).
+        # "-map 0:v:0?" ist optional (kein Fehler, wenn die Quelle kein Bild hat);
+        # "-c:v copy" uebernimmt das Bild unveraendert als ID3-APIC-Frame.
         cmd = [
             self.ffmpeg_path,
             "-i", str(input_path),
+            "-map", "0:a:0",
+            "-map", "0:v:0?",
             "-codec:a", "libmp3lame",
             "-b:a", bitrate,
             "-ar", str(sample_rate),
-            "-map_metadata", "-1",
+            "-c:v", "copy",
+            "-disposition:v:0", "attached_pic",
+            "-map_metadata", "0",
+            "-id3v2_version", "3",
             "-y",
             str(output_path)
         ]
-        
+
         try:
             process = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300
+                timeout=300,
+                creationflags=_SUBPROCESS_FLAGS
             )
             
             if process.returncode == 0:
@@ -236,7 +255,7 @@ class AudioConverter:
                 )
             
             audio.save()
-            temp_output.rename(output_path)
+            temp_output.replace(output_path)
             
             return True
             
