@@ -6,6 +6,7 @@ Unterstuetzt ACR122U NFC/RFID-Lesegeraet
 import functools
 import struct
 import threading
+import time
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
@@ -301,7 +302,13 @@ class RFIDReader:
                     status.card = "warning"
                     return status
                 status.card = "ok"
-                status.programmed = self.read_tonuino_card() is not None
+                # Ein einzelner Lesefehler (Karte wird gerade bewegt) soll nicht
+                # sofort als "nicht programmiert" angezeigt werden - einmal wiederholen
+                card_data = self.read_tonuino_card()
+                if card_data is None:
+                    time.sleep(0.05)
+                    card_data = self.read_tonuino_card()
+                status.programmed = card_data is not None
             except Exception as e:
                 status.card = "none"
                 status.error = str(e)
