@@ -13,10 +13,10 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QSplitter, QInputDialog,
     QAbstractItemView, QProgressDialog, QApplication,
-    QToolButton, QMenu, QComboBox
+    QComboBox, QMenuBar
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QPoint
-from PyQt6.QtGui import QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QSettings, QEvent, QPoint
+from PyQt6.QtGui import QCursor, QFont, QPixmap, QIcon, QPainter, QColor, QActionGroup
 
 from core import __version__
 from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
@@ -28,6 +28,7 @@ from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteC
 from core.updater import UpdateChecker, UpdateDownloader, UpdateInfo, GITHUB_RELEASES_PAGE
 from gui.audio_player import AudioPlayerBar
 from gui.update_dialog import UpdateDialog
+from gui.title_bar import TitleBar
 
 
 def resource_path(*parts) -> str:
@@ -242,9 +243,12 @@ class MainWindow(QMainWindow):
 
     # Zwei alternative Wege, eine RFID-Karte zu programmieren - siehe
     # _set_reader_mode(): teilen sich denselben Bereich in der Sidebar,
-    # umgeschaltet ueber das Burger-Menue (RFID-Leser).
+    # umgeschaltet ueber das Menue Einstellungen (RFID-Leser).
     READER_MODE_ACR122U = "acr122u"
     READER_MODE_TONUINO = "tonuino"
+
+    # Breite des Fensterrands (px), an dem unter Windows die Groesse geaendert wird
+    RESIZE_BORDER = 6
 
     def __init__(self):
         super().__init__()
@@ -252,6 +256,11 @@ class MainWindow(QMainWindow):
         icon_path = resource_path("resources", "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+        # Unter Windows ersetzt eine eigene Titelleiste (mit Menue) die native
+        # - siehe gui/title_bar.py. Auf macOS/Linux bleibt die normale Menueleiste.
+        self._title_bar = None
+        if sys.platform == "win32":
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setMinimumSize(1200, 800)
 
         self.sd_card: SDCard = None
@@ -310,6 +319,14 @@ class MainWindow(QMainWindow):
     
     def _setup_ui(self):
         """Erstellt die Benutzeroberflaeche"""
+        if sys.platform == "win32":
+            self._title_bar = TitleBar(self, resource_path("resources", "icon.png"))
+            self.setMenuWidget(self._title_bar)
+            menu_bar = self._title_bar.menu_bar
+        else:
+            menu_bar = self.menuBar()
+        self._create_menu_bar(menu_bar)
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
@@ -330,13 +347,62 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(splitter)
 
-    def _create_menu_button(self) -> QToolButton:
-        """Erstellt den Sandwich-Menue-Button mit den Update-Einstellungen.
-        Bewusst kein QMainWindow-Menuebalken (menuBar()) - der wuerde als
-        eigene, vom dunklen Theme abgesetzte Zeile am oberen Fensterrand
-        erscheinen. Der Button wird stattdessen direkt oben rechts in den
-        Content-Bereich eingebettet (siehe _create_main_content)."""
-        menu = QMenu(self)
+    def nativeEvent(self, event_type, message):
+        """Unter Windows: Hit-Test fuer das rahmenlose Fenster. Windows
+        uebernimmt damit Verschieben, Groesse aendern und Einrasten selbst."""
+        if sys.platform == "win32" and self._title_bar is not None and bytes(event_type) == b"windows_generic_MSG":
+            from ctypes import wintypes
+
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0084:  # WM_NCHITTEST
+                pos = self.mapFromGlobal(QCursor.pos())
+                result = self._hit_test(pos)
+                if result is not None:
+                    return True, result
+        # Bewusst kein super().nativeEvent(): der Aufruf stuerzt mit PyQt6 ab
+        return False, 0
+
+    def _hit_test(self, pos: QPoint):
+        """Liefert den WM_NCHITTEST-Rueckgabewert fuer pos (Fensterkoordinaten)
+        oder None, wenn das Fenster normal (HTCLIENT) reagieren soll."""
+        HTCAPTION = 2
+        HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT = 10, 11, 12, 13, 14
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+
+        if not self.isMaximized():
+            b = self.RESIZE_BORDER
+            left, right = pos.x() < b, pos.x() >= self.width() - b
+            top, bottom = pos.y() < b, pos.y() >= self.height() - b
+            if top and left:
+                return HTTOPLEFT
+            if top and right:
+                return HTTOPRIGHT
+            if bottom and left:
+                return HTBOTTOMLEFT
+            if bottom and right:
+                return HTBOTTOMRIGHT
+            if left:
+                return HTLEFT
+            if right:
+                return HTRIGHT
+            if top:
+                return HTTOP
+            if bottom:
+                return HTBOTTOM
+
+        if self._title_bar.is_draggable_at(pos):
+            return HTCAPTION
+        return None
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange and self._title_bar is not None:
+            self._title_bar.update_maximize_button()
+        super().changeEvent(event)
+
+    def _create_menu_bar(self, menu_bar: QMenuBar):
+        """Erstellt das Menue Einstellungen in der Menueleiste des Fensters
+        (Updates, RFID-Leser)."""
+        menu = menu_bar.addMenu("Einstellungen")
 
         action_check_now = menu.addAction("Nach Updates suchen")
         action_check_now.triggered.connect(self._check_for_updates_manual)
@@ -369,26 +435,6 @@ class MainWindow(QMainWindow):
             lambda: self._set_reader_mode(self.READER_MODE_TONUINO)
         )
         reader_group.addAction(action_reader_tonuino)
-
-        menu_button = QToolButton(self)
-        menu_button.setObjectName("menuButton")
-        menu_button.setIcon(self._icon_from_glyph("", color="#cdd6f4", size=28))  # menu
-        menu_button.setIconSize(QSize(28, 28))
-        menu_button.setToolTip("Menü")
-        menu_button.setAutoRaise(True)
-        # Bewusst kein setMenu()/setPopupMode(): Qt's automatische Popup-
-        # Platzierung richtet das Menu links am Button aus und laesst es nach
-        # rechts aufklappen - direkt am rechten Fensterrand wuerde es damit
-        # ueber das Fenster hinausragen. Stattdessen manuell so positionieren,
-        # dass die rechte Menu-Kante an der rechten Button-Kante ausgerichtet
-        # ist (Aufklappen nach links, bleibt im Fenster).
-        menu_button.clicked.connect(lambda: self._show_corner_menu(menu_button, menu))
-
-        return menu_button
-
-    def _show_corner_menu(self, button: QToolButton, menu: QMenu):
-        pos = button.mapToGlobal(QPoint(button.width() - menu.sizeHint().width(), button.height()))
-        menu.exec(pos)
 
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""
@@ -609,11 +655,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
-
-        top_bar = QHBoxLayout()
-        top_bar.addStretch()
-        top_bar.addWidget(self._create_menu_button())
-        layout.addLayout(top_bar)
 
         self.welcome_widget = QWidget()
         welcome_layout = QVBoxLayout(self.welcome_widget)
@@ -1516,7 +1557,7 @@ class MainWindow(QMainWindow):
 
     def _set_reader_mode(self, mode: str):
         """Schaltet zwischen den beiden Programmierwegen um (ACR122U-Leser vs.
-        seriell ueber den TonUINO selbst) - ausgewaehlt ueber das Burger-Menue
+        seriell ueber den TonUINO selbst) - ausgewaehlt ueber das Menue Einstellungen
         (RFID-Leser), beide teilen sich denselben Bereich in der Sidebar."""
         self._reader_mode = mode
         is_tonuino = mode == self.READER_MODE_TONUINO
