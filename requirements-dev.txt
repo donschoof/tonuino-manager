@@ -1,5 +1,5 @@
 # Entwicklung: Laufzeit-Abhaengigkeiten + Build, Tests und Lint
 -r requirements.txt
-pyinstaller>=6.0.0
+pyinstaller>=6.9.0  # PYINSTALLER_RESET_ENVIRONMENT (siehe update_controller.py)
 pytest>=8.0
 pyflakes>=3.2

@@ -139,6 +139,14 @@ class UpdateController(QObject):
         beruehren."""
         try:
             if sys.platform.startswith("win"):
+                # Der Installer startet die App am Ende per [Run] und erbt dabei
+                # die Umgebung dieses Prozesses. In der PyInstaller-onefile-EXE
+                # zeigt sie auf das temporaere _MEI-Verzeichnis dieser Instanz,
+                # das beim Beenden geloescht wird: die neue App fand dann ihre
+                # python311.dll nicht ("Failed to load Python DLL"). Mit diesem
+                # Reset behandelt der Bootloader den Kindprozess als frischen
+                # Start und entpackt neu.
+                os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
                 os.startfile(filepath)
                 QApplication.instance().quit()
             elif sys.platform.startswith("linux"):
