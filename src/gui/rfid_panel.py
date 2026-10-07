@@ -12,10 +12,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from core.sd_card import Folder
+from core import pmodes
 from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
 from gui.common import heading_font, confirm_action, icon_from_glyph, ClickableLabel
 from gui.workers import RfidPoller, TonuinoConnectWorker, TonuinoCardWorker
+from gui import theme
 
 TONUINO_IDLE_HINT = (
     "\n\nHinweis: Der TonUINO muss dafür im Leerlauf (IDLE) oder in Pause sein "
@@ -418,7 +420,7 @@ class RfidPanel(QFrame):
         mode = dict(self.RFID_MODES)[mode_label]
         special = 0
 
-        if mode == 4:  # Einzelner Track
+        if mode == pmodes.PMODE_EINZEL:
             track_count = max(self.current_folder.track_count, 1)
             special, ok = QInputDialog.getInt(
                 self,
@@ -660,7 +662,7 @@ class RfidPanel(QFrame):
         """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
         (nichts zu loeschen) und blockt Klicks im deaktivierten Zustand -
         wie bei einem echten (aber unsichtbaren) Button."""
-        color = "#f38ba8" if enabled else "#585b70"
+        color = theme.RED if enabled else theme.SURFACE2
         self.erase_card_icon.setPixmap(icon_from_glyph("", color=color, size=20).pixmap(20, 20))
         self.erase_card_icon.setEnabled(enabled)
 

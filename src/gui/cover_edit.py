@@ -11,6 +11,7 @@ from typing import Optional
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
+from gui import theme
 
 # Material-Icons-Codepoints (gebuendelte Schriftart, siehe main.py)
 _GLYPH_EDIT = ""   # edit
@@ -92,19 +93,19 @@ class CoverEditWidget(QWidget):
             y = (self.height() - scaled.height() / self.devicePixelRatioF()) / 2
             painter.drawPixmap(int(x), int(y), scaled)
         else:
-            painter.fillRect(rect, QColor("#313244"))
+            painter.fillRect(rect, QColor(theme.SURFACE0))
             if not (self._hovered and self.isEnabled()):  # unter dem Overlay nicht durchscheinen lassen
-                self._draw_glyph(painter, _GLYPH_IMAGE, self.height() * 0.36, QColor("#6c7086"), rect, 0.0)
+                self._draw_glyph(painter, _GLYPH_IMAGE, self.height() * 0.36, QColor(theme.OVERLAY0), rect, 0.0)
 
         if self._hovered and self.isEnabled():
             painter.fillRect(rect, QColor(17, 17, 27, 190))
-            self._draw_glyph(painter, _GLYPH_EDIT, self.height() * 0.2, QColor("#cdd6f4"), rect, -0.07)
+            self._draw_glyph(painter, _GLYPH_EDIT, self.height() * 0.2, QColor(theme.TEXT), rect, -0.07)
 
             font = QFont(self.font())
             font.setBold(True)
             font.setPointSizeF(10)
             painter.setFont(font)
-            painter.setPen(QColor("#cdd6f4"))
+            painter.setPen(QColor(theme.TEXT))
             text = "Cover ändern" if self._pixmap is not None else "Cover hinzufügen"
             text_rect = QRectF(rect.left(), rect.center().y() + self.height() * 0.02, rect.width(), self.height() * 0.3)
             painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop), text)

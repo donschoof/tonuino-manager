@@ -2,6 +2,7 @@
 Hintergrund-Threads des Tonuino-Managers (Scan, Dateiarbeit, RFID, Serial)
 """
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -14,6 +15,8 @@ from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, RfidStatus
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
+
+log = logging.getLogger(__name__)
 
 
 class SDCardScanner(QThread):
@@ -33,10 +36,8 @@ class SDCardScanner(QThread):
             success = self.sd_card.scan()
             self.progress.emit(100)
             self.completed.emit(success)
-        except Exception as e:
-            print(f"Scan-Fehler: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            log.exception("Scan-Fehler")
             self.completed.emit(False)
 
 

@@ -8,6 +8,7 @@ import sys
 from PyQt6.QtWidgets import QLabel, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from gui import theme
 
 
 def resource_path(*parts) -> str:
@@ -63,7 +64,7 @@ class ClickableLabel(QLabel):
         super().mousePressEvent(event)
 
 
-def icon_from_glyph(glyph: str, color: str = "#1e1e2e", size: int = 16) -> QIcon:
+def icon_from_glyph(glyph: str, color: str = theme.BASE, size: int = 16) -> QIcon:
     """Rendert ein Glyph aus der gebuendelten Material-Icons-Schriftart (Apache-2.0)
     als QIcon, damit es (anders als reiner Text) mit setIcon() auf Buttons benutzt
     werden kann, ohne die restliche Button-Schrift zu beeinflussen. Plattformneutral
