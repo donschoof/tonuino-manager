@@ -3,11 +3,8 @@ Metadaten-Verwaltung fuer Tonuino
 Liest und schreibt ID3-Tags und Cover-Art
 """
 
-from pathlib import Path
 from typing import Optional, Tuple
 from dataclasses import dataclass
-from PIL import Image
-import io
 import time
 
 
@@ -25,11 +22,6 @@ class TrackMetadata:
     duration: float = 0.0
     has_cover: bool = False
     cover_mime: str = ""
-
-
-    def is_empty(self) -> bool:
-        """Prueft ob Metadaten leer sind"""
-        return not any([self.title, self.artist, self.album])
 
 
 class MetadataManager:
@@ -195,61 +187,13 @@ class MetadataManager:
             print(f"Fehler beim Lesen des Covers: {e}")
             return None
 
-    def extract_cover(self, filepath: str, output_path: str) -> bool:
-        """Extrahiert das Cover aus einer MP3-Datei"""
-        if not self._mutagen_available:
-            return False
-        
-        try:
-            from mutagen.id3 import APIC
-
-            audio = self._open_mp3(filepath)
-
-            if audio.tags:
-                for key in audio.tags.keys():
-                    if key.startswith('APIC'):
-                        cover_data = audio.tags[key].data
-                        with open(output_path, 'wb') as f:
-                            f.write(cover_data)
-                        return True
-            
-            return False
-            
-        except Exception as e:
-            print(f"Fehler beim Extrahieren des Covers: {e}")
-            return False
-    
-    def get_cover_image(self, filepath: str, max_size: Tuple[int, int] = (300, 300)) -> Optional[Image.Image]:
-        """Gibt das Cover als PIL Image zurueck"""
-        if not self._mutagen_available:
-            return None
-        
-        try:
-            from mutagen.id3 import APIC
-
-            audio = self._open_mp3(filepath)
-
-            if audio.tags:
-                for key in audio.tags.keys():
-                    if key.startswith('APIC'):
-                        cover_data = audio.tags[key].data
-                        image = Image.open(io.BytesIO(cover_data))
-                        image.thumbnail(max_size, Image.Resampling.LANCZOS)
-                        return image
-            
-            return None
-            
-        except Exception as e:
-            print(f"Fehler beim Laden des Covers: {e}")
-            return None
-    
     def set_cover(self, filepath: str, cover_path: str) -> bool:
         """Setzt das Cover fuer eine MP3-Datei"""
         if not self._mutagen_available:
             return False
         
         try:
-            from mutagen.id3 import ID3, APIC
+            from mutagen.id3 import APIC
 
             audio = self._open_mp3(filepath)
 
@@ -280,34 +224,3 @@ class MetadataManager:
             print(f"Fehler beim Setzen des Covers: {e}")
             return False
     
-    def remove_cover(self, filepath: str) -> bool:
-        """Entfernt das Cover aus einer MP3-Datei"""
-        if not self._mutagen_available:
-            return False
-        
-        try:
-            audio = self._open_mp3(filepath)
-
-            if audio.tags:
-                keys_to_remove = [key for key in audio.tags.keys() if key.startswith('APIC')]
-                for key in keys_to_remove:
-                    del audio.tags[key]
-                audio.save()
-            
-            return True
-            
-        except Exception as e:
-            print(f"Fehler beim Entfernen des Covers: {e}")
-            return False
-    
-    @staticmethod
-    def create_thumbnail(image_path: str, output_path: str, size: Tuple[int, int] = (150, 150)) -> bool:
-        """Erstellt ein Thumbnail eines Bildes"""
-        try:
-            with Image.open(image_path) as img:
-                img.thumbnail(size, Image.Resampling.LANCZOS)
-                img.save(output_path)
-            return True
-        except Exception as e:
-            print(f"Fehler beim Erstellen des Thumbnails: {e}")
-            return False
