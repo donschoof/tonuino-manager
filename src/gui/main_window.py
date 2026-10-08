@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
 
         version_label = QLabel(f"Version {__version__}")
         # padding-left entspricht dem Padding von #sidebarTitle, damit beide bündig sind
-        version_label.setStyleSheet(f"color: {theme.OVERLAY0}; font-size: 10px; padding-left: 15px;")
+        version_label.setStyleSheet(f"color: {theme.OVERLAY2}; font-size: 10px; padding-left: 15px;")
 
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
@@ -266,7 +266,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("padding-top: 0px; padding-bottom: 0px;")
         title.setFixedHeight(title.sizeHint().height() - 2)
         version_label.setStyleSheet(
-            f"color: {theme.OVERLAY0}; font-size: 10px; padding-left: 15px; padding-top: 0px;"
+            f"color: {theme.OVERLAY2}; font-size: 10px; padding-left: 15px; padding-top: 0px;"
         )
         title_col.addWidget(title)
         title_col.addWidget(version_label)
