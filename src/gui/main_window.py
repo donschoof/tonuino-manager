@@ -418,7 +418,7 @@ class MainWindow(QMainWindow):
         track_header_layout.addWidget(tracks_title)
         track_header_layout.addStretch()
 
-        self.btn_multi_select = QPushButton(" Auswählen")
+        self.btn_multi_select = QPushButton(" Mehrfachauswahl")
         self.btn_multi_select.setIcon(icon_from_glyph("\ue877", color=theme.TEXT))  # Done all
         self.btn_multi_select.setObjectName("ghostButton")
         self.btn_multi_select.setCheckable(True)
@@ -443,9 +443,9 @@ class MainWindow(QMainWindow):
         self.btn_move_track_down.clicked.connect(lambda: self._move_selected_tracks(1))
         track_header_layout.addWidget(self.btn_move_track_down)
 
-        self.btn_delete_tracks = QPushButton(" Track löschen")
-        self.btn_delete_tracks.setObjectName("ghostDangerButton")
-        self.btn_delete_tracks.setIcon(icon_with_hover("", theme.SUBTEXT0, theme.RED))  # Delete
+        self.btn_delete_tracks = QPushButton(" Tracks löschen")
+        self.btn_delete_tracks.setObjectName("softDangerButton")
+        self.btn_delete_tracks.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
@@ -1263,7 +1263,7 @@ class MainWindow(QMainWindow):
         ]
 
     def _update_track_action_buttons(self):
-        """Setzt Aktivierung und Beschriftung der Track-Aktionen. Im
+        """Setzt Aktivierung und Tooltips der Track-Aktionen. Im
         Mehrfachauswahl-Modus wirken Loeschen und Nach oben/unten auf alle
         markierten Tracks, sonst auf den aktuell ausgewaehlten Track.
         In Systemordnern (mp3/advert) ist Bearbeiten (Umsortieren, Loeschen,
@@ -1272,12 +1272,10 @@ class MainWindow(QMainWindow):
         has_current = self.track_list.currentItem() is not None
         if self._multi_select_mode:
             has_target = bool(self._checked_rows())
-            self.btn_delete_tracks.setText(" Auswahl löschen")
             self.btn_move_track_up.setToolTip("Ausgewählte Tracks nach oben verschieben")
             self.btn_move_track_down.setToolTip("Ausgewählte Tracks nach unten verschieben")
         else:
             has_target = has_current
-            self.btn_delete_tracks.setText(" Track löschen")
             self.btn_move_track_up.setToolTip("Track nach oben verschieben")
             self.btn_move_track_down.setToolTip("Track nach unten verschieben")
 
@@ -1299,7 +1297,7 @@ class MainWindow(QMainWindow):
             self.btn_multi_select.blockSignals(True)
             self.btn_multi_select.setChecked(enabled)
             self.btn_multi_select.blockSignals(False)
-        self.btn_multi_select.setText(" Fertig" if enabled else " Auswählen")
+        self.btn_multi_select.setText(" Mehrfachauswahl beenden" if enabled else " Mehrfachauswahl")
         # dunkles Icon auf dem blauen (eingeschalteten) Button, sonst hell
         self.btn_multi_select.setIcon(
             icon_from_glyph("", color=theme.BASE if enabled else theme.TEXT)  # Done all
