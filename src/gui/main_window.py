@@ -504,8 +504,22 @@ class MainWindow(QMainWindow):
         if not path:
             return
         
+        # Ansicht der bisherigen Karte (Trackliste, Cover, Player) verwerfen
+        if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
+            self._add_tracks_worker.cancel()
+        self._stop_folder_name_worker()
+        self._stop_track_meta_worker()
+        self.player_bar.stop_and_clear()
+        self.current_folder = None
+        self.folder_list.clear()
+        self.track_list.clear()
+        self.cover_label.set_cover(None)
+        self.stack.setCurrentWidget(self.welcome_widget)
+        self._update_folder_action_buttons()
+
         self.sd_card = SDCard(path)
         self._folder_name_cache.clear()
+        self.rfid_panel.refresh()
 
         self.status_bar.showMessage("Scanne SD-Karte...")
 
