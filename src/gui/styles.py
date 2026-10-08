@@ -299,13 +299,28 @@ QPushButton#ghostButton:checked {
     color: @BASE@;
 }
 
-QPushButton#ghostDangerButton {
+/* Loeschen: in Ruhe neutral, erst beim Ueberfahren ein dezenter roter Schein
+   (Text und Symbol bleiben rot auf getoentem Grund, nicht auf vollem Rot) */
+QPushButton#ghostDangerButton:hover {
+    background-color: rgba(243, 139, 168, 38);
     color: @RED@;
 }
 
-QPushButton#ghostDangerButton:hover {
-    background-color: @RED@;
-    color: @BASE@;
+QPushButton#softDangerButton {
+    background-color: rgba(243, 139, 168, 30);
+    color: @RED@;
+    border: 1px solid rgba(243, 139, 168, 70);
+}
+
+QPushButton#softDangerButton:hover {
+    background-color: rgba(243, 139, 168, 60);
+    border-color: rgba(243, 139, 168, 120);
+}
+
+QPushButton#softDangerButton:disabled {
+    background-color: @BASE@;
+    color: @SURFACE2@;
+    border-color: @SURFACE0@;
 }
 
 QPushButton#ghostButton:disabled,

@@ -21,7 +21,7 @@ from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOL
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
-from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph
+from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph, icon_with_hover
 from gui.track_list import HoverListWidget, reorder_with_selection
 from gui.workers import (
     SDCardScanner, TrackAddWorker, FolderNameWorker, TrackMetaWorker, PurgeWorker,
@@ -397,8 +397,8 @@ class MainWindow(QMainWindow):
         actions.addWidget(btn_add_tracks)
 
         btn_delete_folder = QPushButton(" Ordner löschen")
-        btn_delete_folder.setObjectName("dangerButton")
-        btn_delete_folder.setIcon(icon_from_glyph("\ue872", color=theme.BASE))  # Delete
+        btn_delete_folder.setObjectName("softDangerButton")
+        btn_delete_folder.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
         btn_delete_folder.setFixedHeight(38)
         btn_delete_folder.setMinimumWidth(170)
         btn_delete_folder.clicked.connect(self._delete_folder)
@@ -445,7 +445,7 @@ class MainWindow(QMainWindow):
 
         self.btn_delete_tracks = QPushButton(" Track löschen")
         self.btn_delete_tracks.setObjectName("ghostDangerButton")
-        self.btn_delete_tracks.setIcon(icon_from_glyph("", color=theme.RED))  # Delete
+        self.btn_delete_tracks.setIcon(icon_with_hover("", theme.SUBTEXT0, theme.RED))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
