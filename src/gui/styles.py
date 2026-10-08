@@ -280,30 +280,21 @@ QPushButton#dangerButton:disabled {
     border-color: @SURFACE0@;
 }
 
-/* Werkzeugleiste ueber der Track-Liste: flach, nur beim Ueberfahren sichtbar */
-QPushButton#ghostButton,
-QPushButton#ghostDangerButton {
-    background: transparent;
-    border: 1px solid transparent;
-    color: @SUBTEXT0@;
+/* Werkzeugleiste ueber der Track-Liste: gleiche Optik wie die uebrigen Buttons,
+   nur kompakter (weniger Padding) */
+QPushButton#ghostButton {
     padding: 6px 12px;
 }
 
-QPushButton#ghostButton:hover {
-    background-color: @SURFACE0@;
-    color: @TEXT@;
-}
-
 QPushButton#ghostButton:checked {
-    background-color: @BLUE@;
-    color: @BASE@;
+    font-weight: normal;
 }
 
-/* Loeschen: in Ruhe neutral, erst beim Ueberfahren ein dezenter roter Schein
-   (Text und Symbol bleiben rot auf getoentem Grund, nicht auf vollem Rot) */
-QPushButton#ghostDangerButton:hover {
-    background-color: rgba(243, 139, 168, 38);
-    color: @RED@;
+/* Eingeschaltet: beim Ueberfahren etwas hellers Blau statt des grauen Hover-Hintergrunds */
+QPushButton#ghostButton:checked:hover {
+    background-color: @BLUE_HOVER@;
+    border-color: @BLUE_HOVER@;
+    color: @BASE@;
 }
 
 QPushButton#softDangerButton {
@@ -322,14 +313,6 @@ QPushButton#softDangerButton:disabled {
     color: @SURFACE2@;
     border-color: @SURFACE0@;
 }
-
-QPushButton#ghostButton:disabled,
-QPushButton#ghostDangerButton:disabled {
-    background: transparent;
-    border-color: transparent;
-    color: @SURFACE2@;
-}
-
 QPushButton#successButton {
     background-color: @GREEN@;
     color: @BASE@;
