@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from core import pmodes
+from core.tonuino_serial import TonuinoSerial
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,25 @@ PLAYBACK_MODES = [
 ]
 
 
+def describe_card(data: Optional[TonuinoCardData], max_mode_len: int = 14) -> Tuple[str, str]:
+    """Kurztext fuer die Statusanzeige: (Beschriftung, Tooltip). Beschriftung ist
+    "leer" fuer eine unprogrammierte Karte, sonst Ordner und Modus in zwei Zeilen
+    ("Ordner 03" / "Album"); Admin-Karten und Modi ohne Ordner zeigen nur den Modus."""
+    if data is None:
+        return "leer", "Karte ist nicht programmiert"
+
+    info = TonuinoSerial.WRITECARD_MODES.get(data.mode)
+    label = info.label if info else f"Modus {data.mode}"
+
+    if data.mode == pmodes.PMODE_ADMIN_CARD:
+        return "Admin", "Admin-Karte"
+
+    short = label if len(label) <= max_mode_len else label[:max_mode_len - 1] + "…"
+    if data.folder > 0:
+        return f"Ordner {data.folder:02d}\n{short}", f"Ordner {data.folder:02d}, Modus: {label}"
+    return short, f"Modus: {label}"
+
+
 def _locked(method):
     """Fuehrt die Methode unter RFIDReader.lock aus, damit der Status-Poller
     nicht mitten in eine Kommandofolge (Typ erkennen, authentifizieren,
@@ -68,6 +88,7 @@ class RfidStatus:
     reader: str = "neutral"  # "ok" | "neutral" (nicht angeschlossen) | "error"
     card: str = "none"  # "none" | "warning" (nicht lesbar) | "ok"
     programmed: bool = False  # Karte enthaelt eine Tonuino-Konfiguration
+    card_data: Optional[TonuinoCardData] = None  # deren Inhalt (None, wenn nicht programmiert)
     error: str = ""
 
 
@@ -301,6 +322,7 @@ class RFIDReader:
                     time.sleep(0.05)
                     card_data = self.read_tonuino_card()
                 status.programmed = card_data is not None
+                status.card_data = card_data
             except Exception as e:
                 status.card = "none"
                 status.error = str(e)
