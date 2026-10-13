@@ -966,8 +966,9 @@ class MainWindow(QMainWindow):
 
         lines.append("")
         lines.append(
-            "Außerdem werden leere Ordner gelöscht und alle Ordner- und "
-            "Track-Nummern lückenlos neu vergeben."
+            "Außerdem werden leere Ordner gelöscht und die Tracks in jedem "
+            "Ordner lückenlos neu nummeriert. Die Ordnernummern bleiben "
+            "unverändert, programmierte RFID-Karten bleiben also gültig."
         )
         lines.append("")
         lines.append("Fortfahren?")
@@ -976,8 +977,8 @@ class MainWindow(QMainWindow):
     def _purge_sd_card(self):
         """Bereinigt die SD-Karte: entfernt alles, was nicht zur Tonuio-Struktur
         gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien auch
-        innerhalb dieser Ordner auf und nummeriert Ordner/Tracks anschliessend
-        luecken- und kollisionsfrei durch."""
+        innerhalb dieser Ordner auf und nummeriert die Tracks je Ordner anschliessend
+        luecken- und kollisionsfrei durch (Ordnernummern bleiben unveraendert)."""
         if not self.sd_card:
             return
 
@@ -1143,6 +1144,14 @@ class MainWindow(QMainWindow):
 
         if self.current_folder is None:
             return  # Karte wurde waehrend des Hinzufuegens entfernt (UI ist schon zurueckgesetzt)
+
+        # Neue Tracks fuellen die kleinste freie Nummer - verbleibende Luecken
+        # (z.B. bereits vorhandene) jetzt schliessen
+        try:
+            self._release_files()
+            self.sd_card.close_track_gaps(self.current_folder)
+        except Exception as e:
+            self._add_tracks_errors.append(f"Nummerierung: {e}")
 
         self._folder_name_cache.pop(self.current_folder.index, None)
         self._show_folder(self.current_folder)
@@ -1505,12 +1514,16 @@ class MainWindow(QMainWindow):
         new_order, moved_rows = reorder_with_selection(
             list(self.current_folder.tracks), {id(t) for t in selected}, delta
         )
-        if new_order == list(self.current_folder.tracks):
-            return  # nichts verschiebbar (alles schon am Rand)
+        nothing_to_move = new_order == list(self.current_folder.tracks)
+        if nothing_to_move and not self.sd_card.has_track_gaps(self.current_folder):
+            return  # nichts verschiebbar (alles schon am Rand) und keine Luecken zu schliessen
 
         self._release_files()
         try:
-            self.sd_card.reorder_tracks(self.current_folder, new_order)
+            if nothing_to_move:
+                self.sd_card.close_track_gaps(self.current_folder, new_order)
+            else:
+                self.sd_card.reorder_tracks(self.current_folder, new_order)
             self._folder_name_cache.pop(self.current_folder.index, None)
             self._populate_track_list(self.current_folder)
             if self._multi_select_mode:
