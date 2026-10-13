@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt
 
 from core.sd_card import Folder
 from core import pmodes
-from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES
+from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES, describe_card
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
 from gui.common import heading_font, confirm_action, icon_from_glyph, ClickableLabel
 from gui.workers import RfidPoller, TonuinoConnectWorker, TonuinoCardWorker
@@ -144,6 +144,8 @@ class RfidPanel(QFrame):
 
         programmed_tile, self.programmed_icon = self._create_status_tile("", "Ordner")
         status_row.addWidget(programmed_tile)
+        self.programmed_caption = programmed_tile.findChild(QLabel, "statusCaption")
+        self.programmed_tile = programmed_tile
 
         rfid_layout.addWidget(self.acr122u_status_widget)
 
@@ -214,9 +216,20 @@ class RfidPanel(QFrame):
         caption_label = QLabel(caption)
         caption_label.setObjectName("statusCaption")
         caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Platz fuer zwei Zeilen (z.B. "Ordner 03" / "Album"), damit alle Kacheln
+        # gleich hoch bleiben und nichts springt, wenn der Text wechselt
+        caption_label.setFixedHeight(30)
         col.addWidget(caption_label)
 
         return container, icon_label
+
+    def _set_programmed_caption(self, text: str, tooltip: str):
+        """Beschriftung und Tooltip der Ordner-Kachel (Inhalt der aufliegenden Karte)"""
+        self.programmed_caption.setText(text)
+        self.programmed_tile.setToolTip(tooltip)
+
+    def _reset_programmed_caption(self):
+        self._set_programmed_caption("Ordner", "")
 
     def _set_status_icon(self, icon_label: QLabel, state: str):
         """Setzt die Farbe eines Status-Icons (ok/warning/error/neutral)"""
@@ -324,6 +337,7 @@ class RfidPanel(QFrame):
         if not present:
             self._set_status_icon(self.card_icon, "neutral")
             self._set_status_icon(self.programmed_icon, "neutral")
+            self._reset_programmed_caption()
             self._rfid_card_present = False
             self._rfid_card_programmed = False
             self._update_program_buttons()
@@ -345,12 +359,14 @@ class RfidPanel(QFrame):
         if status.card == "ok":
             self._set_status_icon(self.card_icon, "ok")
             self._set_status_icon(self.programmed_icon, "ok" if status.programmed else "warning")
+            self._set_programmed_caption(*describe_card(status.card_data))
             self._rfid_card_present = True
             self._rfid_card_programmed = status.programmed
             self._update_program_buttons()
         elif status.card == "warning":
             self._set_status_icon(self.card_icon, "warning")
             self._set_status_icon(self.programmed_icon, "neutral")
+            self._reset_programmed_caption()
             self._rfid_card_present = False
             self._rfid_card_programmed = False
             self._update_program_buttons()
