@@ -83,15 +83,6 @@ def test_reorder_failure_restores_original_names(tmp_path, monkeypatch):
     assert (tmp_path / "01" / "003.mp3").read_bytes() == b"003.mp3"
 
 
-def test_renumber_folders_closes_gaps(tmp_path):
-    card = make_card(tmp_path, {"01": ["001.mp3"], "03": ["001.mp3"], "07": ["001.mp3"]})
-
-    card.renumber_folders()
-
-    assert names(tmp_path) == ["01", "02", "03"]
-    assert sorted(card.folders) == [1, 2, 3]
-
-
 def test_purge_removes_foreign_items_and_empty_folders(tmp_path):
     card = make_card(tmp_path, {"02": ["001.mp3", "notes.txt", "._001.mp3"], "05": [], "advert": ["0001.mp3"]})
     (tmp_path / "readme.txt").write_text("x")
@@ -104,8 +95,64 @@ def test_purge_removes_foreign_items_and_empty_folders(tmp_path):
 
     card.purge()
 
-    assert names(tmp_path) == ["01", "advert"]
+    assert names(tmp_path) == ["02", "advert"]
+    assert names(tmp_path / "02") == ["001.mp3"]
+
+
+def test_purge_keeps_folder_numbers_but_closes_track_gaps(tmp_path):
+    card = make_card(tmp_path, {"01": ["001.mp3"], "03": ["002.mp3", "005.mp3"], "07": ["001.mp3"]})
+
+    card.purge()
+
+    assert names(tmp_path) == ["01", "03", "07"]
+    assert sorted(card.folders) == [1, 3, 7]
+    assert names(tmp_path / "03") == ["001.mp3", "002.mp3"]
+    assert (tmp_path / "03" / "002.mp3").read_bytes() == b"005.mp3"
+
+
+def test_purge_handles_foreign_folder_named_like_a_track(tmp_path):
+    card = make_card(tmp_path, {"01": ["002.mp3"]})
+    (tmp_path / "01" / "001.mp3").mkdir()
+
+    card.purge()
+
     assert names(tmp_path / "01") == ["001.mp3"]
+    assert (tmp_path / "01" / "001.mp3").is_file()
+    assert (tmp_path / "01" / "001.mp3").read_bytes() == b"002.mp3"
+
+
+def test_close_track_gaps_renumbers_and_keeps_order(tmp_path):
+    card = make_card(tmp_path, {"01": ["002.mp3", "005.mp3", "009.mp3"]})
+    folder = card.folders[1]
+    assert card.has_track_gaps(folder)
+
+    assert card.close_track_gaps(folder) is True
+
+    assert names(tmp_path / "01") == ["001.mp3", "002.mp3", "003.mp3"]
+    assert [(tmp_path / "01" / n).read_bytes() for n in ("001.mp3", "002.mp3", "003.mp3")] == [b"002.mp3", b"005.mp3", b"009.mp3"]
+    assert not card.has_track_gaps(folder)
+    assert card.close_track_gaps(folder) is False
+
+
+def test_close_track_gaps_does_not_rename_without_gaps(tmp_path):
+    card = make_card(tmp_path, {"01": ["001.mp3", "002.mp3"]})
+    folder = card.folders[1]
+    mtimes = {p.name: p.stat().st_mtime_ns for p in (tmp_path / "01").iterdir()}
+
+    assert card.close_track_gaps(folder) is False
+
+    assert {p.name: p.stat().st_mtime_ns for p in (tmp_path / "01").iterdir()} == mtimes
+    assert [t.index for t in folder.tracks] == [1, 2]
+
+
+def test_delete_last_track_needs_no_renaming(tmp_path):
+    card = make_card(tmp_path, {"01": ["001.mp3", "002.mp3", "003.mp3"]})
+    folder = card.folders[1]
+
+    card.delete_tracks(folder, [folder.tracks[2]])
+
+    assert names(tmp_path / "01") == ["001.mp3", "002.mp3"]
+    assert [t.filename for t in folder.tracks] == ["001.mp3", "002.mp3"]
 
 
 def test_create_folder_validates_range(tmp_path):

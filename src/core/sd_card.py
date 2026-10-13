@@ -230,7 +230,7 @@ class SDCard:
             Path(track.filepath).unlink(missing_ok=True)
 
         remaining = [t for t in folder.tracks if t.filepath not in delete_paths]
-        self.reorder_tracks(folder, remaining)
+        self.close_track_gaps(folder, remaining)
 
     @classmethod
     def _rename_second_step(cls, temp_paths: List[Path], finals: List[Path], originals: List[Path]):
@@ -294,30 +294,41 @@ class SDCard:
 
         folder.tracks = updated_tracks
 
-    def renumber_folders(self):
-        """Schliesst Luecken in der 01-99-Ordnernummerierung (z.B. nach dem
-        Loeschen eines Ordners). Systemordner (mp3/advert) werden nie
-        umbenannt. Wie reorder_tracks() wird zunaechst auf temporaere Namen
-        umbenannt, damit sich Ziel- und Quellname nicht ueberschneiden koennen
-        (z.B. beim Verschieben von 03 nach 01)."""
-        ordered = [self.folders[i] for i in sorted(self.folders.keys())]
+    @staticmethod
+    def _is_gapless(tracks: List[Track]) -> bool:
+        """True, wenn die Tracknummern lueckenlos bei 001 beginnen."""
+        return [t.index for t in tracks] == list(range(1, len(tracks) + 1))
 
-        originals = [Path(f.path) for f in ordered]
-        temp_paths = [self.path / f".tmp_{p.name}" for p in originals]
-        finals = [self.path / f"{pos:02d}" for pos in range(1, len(ordered) + 1)]
+    @classmethod
+    def has_track_gaps(cls, folder: Folder) -> bool:
+        """True, wenn die Tracknummern des Ordners Luecken haben (z.B. 001, 003
+        oder 002, 003)."""
+        return not cls._is_gapless(folder.tracks)
 
-        self._rename_all_or_restore(originals, temp_paths)
-        self._rename_second_step(temp_paths, finals, originals)
+    def close_track_gaps(self, folder: Folder, tracks: Optional[List[Track]] = None,
+                         clear_conflicts: bool = False) -> bool:
+        """Gemeinsamer Weg fuer alle Aktionen, die Luecken in der Tracknummerierung
+        schliessen (Loeschen, Hinzufuegen, Verschieben ohne Wirkung, Bereinigen).
+        `tracks` ist die gewuenschte Reihenfolge der verbleibenden Tracks
+        (Standard: der Ordner nach bisheriger Nummer). Umbenannt wird nur, wenn
+        wirklich Luecken da sind; sonst wird lediglich die Trackliste des Ordners
+        aktualisiert. `clear_conflicts` raeumt vorab Fremdordner weg, die wie ein
+        Ziel-Track heissen (z.B. "001.mp3/") und das Umbenennen blockieren
+        wuerden - nur fuer das Bereinigen gedacht. Gibt zurueck, ob umbenannt wurde."""
+        order = sorted(folder.tracks, key=lambda t: t.index) if tracks is None else list(tracks)
 
-        new_folders: Dict[int, Folder] = {}
-        for position, (folder, final_path) in enumerate(zip(ordered, finals), start=1):
-            folder.index = position
-            folder.path = str(final_path)
-            self._scan_tracks(folder)
-            self._find_folder_cover(folder)
-            new_folders[position] = folder
+        if self._is_gapless(order):
+            folder.tracks = order
+            return False
 
-        self.folders = new_folders
+        if clear_conflicts:
+            for pos in range(1, len(order) + 1):
+                target = Path(folder.path) / f"{pos:03d}.mp3"
+                if target.is_dir():
+                    self._force_rmtree(target)
+
+        self.reorder_tracks(folder, order)
+        return True
 
     def preview_purge(self) -> PurgePreview:
         """Ermittelt, was purge() entfernen wuerde, ohne dabei etwas zu
@@ -410,30 +421,32 @@ class SDCard:
     def purge(self):
         """Entfernt alles von der SD-Karte, was nicht zur Tonuio-Struktur
         gehoert (Whitelist: Ordner 01-99, mp3, advert), raeumt Fremddateien
-        auch innerhalb dieser Ordner auf und nummeriert Ordner sowie Tracks
-        anschliessend luecken- und kollisionsfrei durch."""
-        # 1. Fremddateien/-ordner entfernen
-        self._remove_foreign_items()
-
-        # 2. In-Memory-Zustand neu aufbauen
+        auch innerhalb dieser Ordner auf und nummeriert die Tracks je Ordner
+        anschliessend luecken- und kollisionsfrei durch. Die Ordnernummern
+        bleiben dabei unveraendert, damit bereits programmierte RFID-Karten
+        weiter auf den richtigen Ordner zeigen."""
+        # 1. Zustand von der Karte einlesen. Fremddateien muessen dafuer nicht
+        #    vorher weg: _scan_tracks() erkennt nur echte NNN.mp3-Dateien (keine
+        #    AppleDouble-Dateien, keine Unterordner).
         self.scan()
 
-        # 3. Numerierte Ordner, die jetzt leer sind, entfernen
+        # 2. Numerierte Ordner ohne Tracks entfernen (samt Fremdinhalt); die
+        #    uebrigen Ordner behalten ihre Nummer, auch wenn dadurch Luecken
+        #    entstehen
         for idx in list(self.folders.keys()):
             if self.folders[idx].track_count == 0:
                 self.delete_folder(idx)
 
-        # 4. Verbleibende mp3s je numeriertem Ordner luecken- und kollisionsfrei
-        #    durchnummerieren (Systemordner mp3/advert werden nicht sortiert)
+        # 3. Verbleibende mp3s je numeriertem Ordner luecken- und kollisionsfrei
+        #    durchnummerieren; nur Ordner mit Luecken werden umbenannt, die
+        #    Systemordner mp3/advert bleiben unberuehrt
         for folder in self.folders.values():
-            self.reorder_tracks(folder, sorted(folder.tracks, key=lambda t: t.index))
+            self.close_track_gaps(folder, clear_conflicts=True)
 
-        # 5. Luecken in der 01-99-Ordnernummerierung schliessen
-        self.renumber_folders()
-
-        # 6. Fremddateien erneut entfernen: das Umbenennen in Schritt 4/5 kann
-        #    macOS dazu bringen, fuer die umbenannten Dateien/Ordner neue
-        #    Metadatendateien anzulegen (siehe _remove_foreign_items)
+        # 4. Fremddateien/-ordner einmalig am Ende entfernen. Das Umbenennen in
+        #    Schritt 3 kann macOS dazu bringen, fuer die umbenannten Dateien neue
+        #    Metadatendateien anzulegen (siehe _remove_foreign_items) - ein
+        #    Durchgang danach erfasst deshalb alles.
         self._remove_foreign_items()
 
     @property
