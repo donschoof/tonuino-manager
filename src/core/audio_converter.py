@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Optional, Callable
 from enum import Enum
 
+from core import loudness
+
 
 # Unter Windows sonst kurz aufblitzende Konsolenfenster bei jedem FFmpeg-Aufruf
 # (die App laeuft als GUI ohne eigene Konsole).
@@ -149,3 +151,62 @@ class AudioConverter:
         except subprocess.TimeoutExpired:
             raise RuntimeError("Konvertierung abgebrochen (Timeout)")
     
+
+    def measure_loudness(self, filepath: str) -> loudness.LoudnessResult:
+        """Misst die integrierte Lautheit (LUFS) einer Audio-Datei, ohne sie zu veraendern"""
+        if not self._available:
+            raise RuntimeError("FFmpeg ist nicht verfügbar")
+
+        cmd = [
+            self.ffmpeg_path, "-hide_banner", "-nostats",
+            "-i", str(filepath),
+            "-map", "0:a:0",
+            "-af", f"loudnorm=I={loudness.TARGET_LUFS}:TP={loudness.TRUE_PEAK_DB}:LRA=11:print_format=json",
+            "-f", "null", "-",
+        ]
+        try:
+            process = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300,
+                creationflags=_SUBPROCESS_FLAGS
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Messung abgebrochen (Timeout)")
+
+        if process.returncode != 0:
+            raise RuntimeError(f"FFmpeg Fehler: {process.stderr}")
+        return loudness.parse_loudnorm_output(process.stderr)
+
+    def apply_gain(self, input_path: str, output_path: str, gain_db: float,
+                   bitrate_kbps: int = 192) -> None:
+        """Schreibt eine MP3-Kopie mit angepasster Lautstaerke. Ein Begrenzer haelt
+        den Spitzenpegel unter loudness.TRUE_PEAK_DB; Tags und Cover bleiben
+        erhalten (wie in convert_to_mp3)."""
+        if not self._available:
+            raise RuntimeError("FFmpeg ist nicht verfügbar")
+
+        cmd = [
+            self.ffmpeg_path,
+            "-i", str(input_path),
+            "-map", "0:a:0",
+            "-map", "0:v:0?",
+            "-af", f"volume={gain_db}dB,alimiter=limit={loudness.limiter_level():.4f}:level=disabled",
+            "-codec:a", "libmp3lame",
+            "-b:a", f"{bitrate_kbps}k",
+            "-c:v", "copy",
+            "-disposition:v:0", "attached_pic",
+            "-map_metadata", "0",
+            "-id3v2_version", "3",
+            "-f", "mp3",
+            "-y",
+            str(output_path),
+        ]
+        try:
+            process = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300,
+                creationflags=_SUBPROCESS_FLAGS
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Lautstärke-Anpassung abgebrochen (Timeout)")
+
+        if process.returncode != 0:
+            raise RuntimeError(f"FFmpeg Fehler: {process.stderr}")
