@@ -155,6 +155,50 @@ def test_delete_last_track_needs_no_renaming(tmp_path):
     assert [t.filename for t in folder.tracks] == ["001.mp3", "002.mp3"]
 
 
+def test_special_folders_list_all_mp3_files_with_four_digit_and_alpha_names(tmp_path):
+    card = make_card(tmp_path, {
+        "01": ["001.mp3"],
+        "mp3": ["0010_Intro.mp3", "0003.mp3", "0001.mp3", "zeta.mp3", "._0001.mp3", "notes.txt", "0100.MP3"],
+        "advert": ["0002.mp3"],
+    })
+
+    mp3 = card.special_folders["mp3"]
+    assert [t.filename for t in mp3.tracks] == ["0001.mp3", "0003.mp3", "0010_Intro.mp3", "0100.MP3", "zeta.mp3"]
+    assert [t.number for t in mp3.tracks] == ["0001", "0003", "0010", "0100", ""]
+    assert [t.index for t in mp3.tracks][:4] == [1, 3, 10, 100]
+    assert card.special_folders["advert"].track_count == 1
+    # normale Ordner behalten das strenge Schema
+    assert card.folders[1].track_count == 1
+
+
+def test_special_folder_track_display_names(tmp_path):
+    card = make_card(tmp_path, {"mp3": ["0007_Intro.mp3", "zeta.mp3"]})
+    intro, zeta = card.special_folders["mp3"].tracks
+
+    assert intro.display_name == "0007_Intro.mp3"
+    intro.title = "Willkommen"
+    assert intro.display_name == "0007 - Willkommen"
+    assert zeta.display_name == "zeta.mp3"
+    zeta.title = "Ohne Nummer"
+    assert zeta.display_name == "Ohne Nummer"
+
+
+def test_normal_track_display_name_is_unchanged(tmp_path):
+    card = make_card(tmp_path, {"01": ["002.mp3"]})
+    track = card.folders[1].tracks[0]
+    assert track.display_name == "002.mp3"
+    track.title = "Lied"
+    assert track.display_name == "002 - Lied"
+
+
+def test_purge_leaves_system_folder_files_untouched(tmp_path):
+    card = make_card(tmp_path, {"01": ["001.mp3"], "mp3": ["0001.mp3", "0007_Intro.mp3", "notes.txt"]})
+
+    card.purge()
+
+    assert names(tmp_path / "mp3") == ["0001.mp3", "0007_Intro.mp3"]
+
+
 def test_create_folder_validates_range(tmp_path):
     card = make_card(tmp_path, {"01": ["001.mp3"]})
     with pytest.raises(ValueError):
