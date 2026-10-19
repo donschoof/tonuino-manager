@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect
 from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup
 
-from core import __version__
+from core import __version__, loudness
 from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
 from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYTES
 from core.audio_converter import AudioConverter
@@ -25,6 +25,7 @@ from gui.common import resource_path, heading_font, confirm_action, icon_from_gl
 from gui.track_list import HoverListWidget, reorder_with_selection
 from gui.workers import (
     SDCardScanner, TrackAddWorker, FolderNameWorker, TrackMetaWorker, PurgeWorker,
+    LoudnessAnalysisWorker, LoudnessApplyWorker,
 )
 from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
 from gui.cover_edit import CoverEditWidget
@@ -72,6 +73,12 @@ class MainWindow(QMainWindow):
         self.scanner: SDCardScanner = None
         self._add_tracks_worker: TrackAddWorker = None
         self._purge_worker: PurgeWorker = None
+        self._loudness_analysis_worker: LoudnessAnalysisWorker = None
+        self._loudness_apply_worker: LoudnessApplyWorker = None
+        self._loudness_rows = []
+        self._loudness_errors = []
+        self._loudness_phase = "Messen"
+        self._loudness_unchanged = 0
         self.current_folder: Folder = None
         self._folder_name_cache = {}  # folder_index -> aus Album-Tag ermittelter Name
         self._folder_name_labels = {}  # folder_index -> Namens-Label in der Ordnerliste
@@ -396,6 +403,17 @@ class MainWindow(QMainWindow):
         self.btn_add_tracks = btn_add_tracks
         actions.addWidget(btn_add_tracks)
 
+        btn_normalize = QPushButton(" Lautstärke angleichen")
+        btn_normalize.setIcon(icon_from_glyph("", color=theme.TEXT))  # Volume up
+        btn_normalize.setToolTip(
+            "Misst die Lautstärke aller Tracks und gleicht sie auf einen einheitlichen Wert an"
+        )
+        btn_normalize.setFixedHeight(38)
+        btn_normalize.setMinimumWidth(190)
+        btn_normalize.clicked.connect(self._normalize_loudness)
+        self.btn_normalize = btn_normalize
+        actions.addWidget(btn_normalize)
+
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("softDangerButton")
         btn_delete_folder.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
@@ -578,6 +596,9 @@ class MainWindow(QMainWindow):
         schreiben."""
         if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
             self._add_tracks_worker.cancel()
+        for worker in (self._loudness_analysis_worker, self._loudness_apply_worker):
+            if worker is not None and worker.isRunning():
+                worker.cancel()
 
         self._stop_folder_name_worker()
         self._stop_track_meta_worker()
@@ -774,6 +795,7 @@ class MainWindow(QMainWindow):
         editable = self.current_folder is not None and not self._is_special_folder(self.current_folder)
         self.btn_add_tracks.setEnabled(editable)
         self.btn_delete_folder.setEnabled(editable)
+        self.btn_normalize.setEnabled(editable and self.current_folder.track_count > 0)
         self.cover_label.setEnabled(editable)
 
     def _populate_track_list(self, folder: Folder):
@@ -1217,6 +1239,121 @@ class MainWindow(QMainWindow):
         finally:
             os.remove(tmp_path)
 
+    def _normalize_loudness(self):
+        """Gleicht die Lautstaerke der Tracks des aktuellen Ordners an: nach der
+        Bestaetigung wird gemessen und anschliessend direkt angepasst (ein
+        durchgehender Fortschrittsdialog, ohne Zwischenschritt)."""
+        folder = self.current_folder
+        if not folder or self._is_special_folder(folder) or folder.track_count == 0:
+            return
+
+        if not self.audio_converter.is_available:
+            QMessageBox.warning(self, "FFmpeg fehlt", "FFmpeg ist nicht verfügbar.")
+            return
+
+        name = self._resolve_folder_name(folder)
+        confirmed = confirm_action(
+            self,
+            "Lautstärke angleichen",
+            f"Soll die Lautstärke der {folder.track_count} Track(s) im Ordner '{name}' "
+            f"auf {loudness.TARGET_LUFS:.0f} LUFS angeglichen werden?\n\n"
+            "Tracks, die bereits passen, bleiben unverändert. Alle anderen werden neu "
+            "kodiert (leicht verlustbehaftet) und die Originaldateien ersetzt. Das lässt "
+            "sich nicht rückgängig machen."
+        )
+        if not confirmed:
+            return
+
+        self._loudness_rows = []
+        self._loudness_errors = []
+        self._loudness_phase = "Messen"
+        self._loudness_dialog = QProgressDialog(
+            "Lautstärke wird gemessen...", "Abbrechen", 0, folder.track_count, self
+        )
+        self._loudness_dialog.setWindowTitle("Lautstärke angleichen")
+        self._loudness_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._loudness_dialog.setMinimumDuration(0)
+        self._loudness_dialog.setValue(0)
+
+        worker = LoudnessAnalysisWorker(folder.tracks, self.audio_converter)
+        worker.progress.connect(self._on_loudness_progress)
+        worker.measured.connect(lambda track, lufs, error: self._loudness_rows.append((track, lufs, error)))
+        worker.completed.connect(self._on_loudness_analysis_finished)
+        self._loudness_dialog.canceled.connect(worker.cancel)
+        self._loudness_analysis_worker = worker
+        worker.start()
+
+    def _on_loudness_progress(self, current: int, total: int, filename: str):
+        self._loudness_dialog.setValue(current - 1)
+        self._loudness_dialog.setLabelText(f"{self._loudness_phase}: {current}/{total} - {filename}")
+
+    def _on_loudness_analysis_finished(self):
+        # Vor dem Schliessen lesen: QProgressDialog.close() loest selbst "canceled" aus
+        if self._loudness_analysis_worker.was_cancelled:
+            self._loudness_dialog.close()
+            self.status_bar.showMessage("Lautstärke-Angleichung abgebrochen")
+            return
+        if self.current_folder is None:
+            self._loudness_dialog.close()
+            return  # Karte wurde waehrend der Messung entfernt (UI ist schon zurueckgesetzt)
+
+        changes = []
+        for track, measured, error in self._loudness_rows:
+            if error:
+                self._loudness_errors.append(f"{track.filename}: {error}")
+                continue
+            if measured is None:
+                continue  # stumm: nichts zu messen
+            gain = loudness.gain_for(loudness.LoudnessResult(integrated=measured))
+            if gain is not None:
+                changes.append((track, gain))
+        self._loudness_unchanged = len(self._loudness_rows) - len(changes) - len(self._loudness_errors)
+
+        if not changes:
+            self._loudness_dialog.close()
+            self._finish_loudness(0)
+            return
+
+        # Derselbe Fortschrittsdialog laeuft fuer die Anpassung weiter
+        self._release_files()
+        self._loudness_dialog.setMaximum(len(changes))
+        self._loudness_dialog.setValue(0)
+
+        worker = LoudnessApplyWorker(changes, self.audio_converter)
+        worker.progress.connect(self._on_loudness_progress)
+        worker.error.connect(lambda name, message: self._loudness_errors.append(f"{name}: {message}"))
+        worker.completed.connect(self._on_loudness_apply_finished)
+        self._loudness_dialog.canceled.connect(worker.cancel)
+        self._loudness_apply_worker = worker
+        self._loudness_phase = "Anpassen"
+        worker.start()
+
+    def _on_loudness_apply_finished(self, done: int):
+        self._loudness_dialog.close()
+        self._finish_loudness(done)
+
+    def _finish_loudness(self, done: int):
+        """Aktualisiert die Ansicht und meldet das Ergebnis"""
+        if self.current_folder is None:
+            return  # Karte wurde waehrend der Anpassung entfernt (UI ist schon zurueckgesetzt)
+
+        self._show_folder(self.current_folder)
+        if done == 0 and not self._loudness_errors:
+            self.status_bar.showMessage("Alle Tracks liegen bereits im Zielbereich")
+        else:
+            self.status_bar.showMessage(
+                f"Lautstärke von {done} Track(s) angeglichen, {self._loudness_unchanged} passten schon"
+            )
+
+        if self._loudness_errors:
+            QMessageBox.warning(
+                self,
+                "Nicht alle Tracks angepasst",
+                f"{len(self._loudness_errors)} Track(s) konnten nicht angepasst werden "
+                "(die Originaldateien sind unverändert):\n\n"
+                + "\n".join(self._loudness_errors[:5])
+            )
+
     def _on_track_double_clicked(self, item: QListWidgetItem):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
         if self._is_special_folder(self.current_folder):
@@ -1550,6 +1687,11 @@ class MainWindow(QMainWindow):
         if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
             self._add_tracks_worker.cancel()
             self._add_tracks_worker.wait(3000)
+
+        for worker in (self._loudness_analysis_worker, self._loudness_apply_worker):
+            if worker is not None and worker.isRunning():
+                worker.cancel()
+                worker.wait(3000)
 
         self._stop_folder_name_worker()
         self._stop_track_meta_worker()

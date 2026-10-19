@@ -12,6 +12,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.sd_card import SDCard, Folder, Track, MAX_TRACKS_PER_FOLDER
 from core.audio_converter import AudioConverter
+from core import loudness
 from core.metadata import MetadataManager
 from core.rfid import RFIDReader, RfidStatus
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, TonuinoWriteCancelled
@@ -111,6 +112,91 @@ class TrackAddWorker(QThread):
                 self.error.emit(os.path.basename(filepath), str(e))
 
         self.completed.emit(added)
+
+
+class LoudnessAnalysisWorker(QThread):
+    """Misst die Lautheit aller Tracks eines Ordners (nur lesend), damit die UI
+    waehrend der FFmpeg-Aufrufe nicht einfriert."""
+    progress = pyqtSignal(int, int, str)  # aktueller Index, Gesamtzahl, Dateiname
+    # Track, gemessene Lautheit in LUFS (None bei Stille/Fehler), Fehlertext (leer bei Erfolg)
+    measured = pyqtSignal(object, object, str)
+    completed = pyqtSignal()
+
+    def __init__(self, tracks: list, audio_converter: AudioConverter):
+        super().__init__()
+        self.tracks = list(tracks)
+        self.audio_converter = audio_converter
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    @property
+    def was_cancelled(self) -> bool:
+        return self._cancelled
+
+    def run(self):
+        for i, track in enumerate(self.tracks, start=1):
+            if self._cancelled:
+                break
+            self.progress.emit(i, len(self.tracks), track.filename)
+            try:
+                result = self.audio_converter.measure_loudness(track.filepath)
+                self.measured.emit(track, result.integrated, "")
+            except Exception as e:
+                log.warning("Lautheitsmessung fehlgeschlagen (%s): %s", track.filename, e)
+                self.measured.emit(track, None, str(e))
+        self.completed.emit()
+
+
+class LoudnessApplyWorker(QThread):
+    """Gleicht die Lautstaerke der uebergebenen Tracks an. Jede Datei wird zuerst
+    in eine temporaere Datei im selben Ordner geschrieben und ersetzt das Original
+    erst bei Erfolg - ein Fehler oder Abbruch laesst die Originaldatei unberuehrt."""
+    progress = pyqtSignal(int, int, str)  # aktueller Index, Gesamtzahl, Dateiname
+    error = pyqtSignal(str, str)  # Dateiname, Fehlermeldung
+    completed = pyqtSignal(int)  # Anzahl angepasster Tracks
+
+    def __init__(self, items: list, audio_converter: AudioConverter):
+        super().__init__()
+        self.items = list(items)  # [(Track, Verstaerkung in dB)]
+        self.audio_converter = audio_converter
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    @staticmethod
+    def _source_bitrate(filepath: str) -> Optional[int]:
+        try:
+            from mutagen.mp3 import MP3
+            return int(MP3(filepath).info.bitrate)
+        except Exception:
+            return None
+
+    def run(self):
+        done = 0
+        for i, (track, gain_db) in enumerate(self.items, start=1):
+            if self._cancelled:
+                break
+            self.progress.emit(i, len(self.items), track.filename)
+
+            source = Path(track.filepath)
+            temp = source.with_name(f".tmp_norm_{source.name}")
+            try:
+                bitrate = loudness.pick_bitrate_kbps(self._source_bitrate(track.filepath))
+                self.audio_converter.apply_gain(str(source), str(temp), gain_db, bitrate)
+                os.replace(temp, source)
+                done += 1
+            except Exception as e:
+                log.warning("Lautstaerke-Anpassung fehlgeschlagen (%s): %s", track.filename, e)
+                self.error.emit(track.filename, str(e))
+            finally:
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        self.completed.emit(done)
 
 
 class RfidPoller(QThread):
