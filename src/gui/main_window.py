@@ -783,7 +783,7 @@ class MainWindow(QMainWindow):
     def _update_folder_title(self, folder: Folder):
         """Titel und Untertitel im Kopfbereich"""
         self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
-        subtitle = "Tonuino-Systemordner" if folder.is_special else f"Ordner {folder.index:02d}"
+        subtitle = "Tonuino-Systemordner (nicht editierbar)" if folder.is_special else f"Ordner {folder.index:02d}"
         self.folder_subtitle.setText(subtitle)
         # Hat der Ordner keinen eigenen Namen (aus den Tags), waere der Untertitel
         # nur eine Wiederholung des Titels

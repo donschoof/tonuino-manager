@@ -40,7 +40,7 @@ class UpdateDialog(QDialog):
 
         notes = QTextEdit()
         notes.setReadOnly(True)
-        notes.setPlainText(self.info.release_notes or "Keine Release-Notes verfügbar.")
+        notes.setMarkdown(self.info.release_notes or "Keine Release-Notes verfügbar.")
         notes.setMaximumHeight(220)
         layout.addWidget(notes)
 

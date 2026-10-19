@@ -27,12 +27,18 @@ class Track:
     album: str = ""
     duration: float = 0.0
     has_cover: bool = False
-    
+    # Nummer so, wie sie im Dateinamen steht (z.B. "0007" in den Systemordnern);
+    # leer bei normalen Ordnern, dort gilt der dreistellige Index
+    number: str = ""
+
     @property
     def display_name(self) -> str:
         """Lesbarer Name fuer die Anzeige"""
+        label = self.number or (f"{self.index:03d}" if self.index else "")
+        if self.title and label:
+            return f"{label} - {self.title}"
         if self.title:
-            return f"{self.index:03d} - {self.title}"
+            return self.title
         return self.filename
 
 
@@ -70,6 +76,7 @@ class SDCard:
 
     FOLDER_PATTERN = re.compile(r'^(\d{2})$')
     TRACK_PATTERN = re.compile(r'^(\d{3})\.mp3$', re.IGNORECASE)
+    LEADING_DIGITS = re.compile(r'^(\d+)')
     SPECIAL_FOLDER_NAMES = ("mp3", "advert")
 
     def __init__(self, path: str):
@@ -141,8 +148,32 @@ class SDCard:
 
             self.folders[folder_index] = folder
     
+    def _scan_special_tracks(self, folder: Folder):
+        """Liest alle MP3-Dateien eines Systemordners (mp3/advert) ein. Dort gilt
+        nicht das 3-stellige Schema der Ordner 01-99: Nummern sind 4-stellig, haben
+        Luecken und teils Buchstaben im Namen (z.B. 0007_Intro.mp3). Fuehrende Ziffern
+        ergeben die Nummer, Dateien ohne Ziffern stehen am Ende. Die Ordner werden
+        nur angezeigt und abgespielt, nie umbenannt."""
+        tracks = []
+        for item in Path(folder.path).iterdir():
+            if not item.is_file() or item.suffix.lower() != ".mp3" or self._is_appledouble(item.name):
+                continue
+            match = self.LEADING_DIGITS.match(item.name)
+            tracks.append(Track(
+                index=int(match.group(1)) if match else 0,
+                filename=item.name,
+                filepath=str(item),
+                number=match.group(1) if match else "",
+            ))
+        tracks.sort(key=lambda t: (t.index == 0 and not t.number, t.index, t.filename.lower()))
+        folder.tracks = tracks
+
     def _scan_tracks(self, folder: Folder):
         """Scansi alle Tracks in einem Ordner"""
+        if folder.is_special:
+            self._scan_special_tracks(folder)
+            return
+
         folder_path = Path(folder.path)
         tracks = []
         
