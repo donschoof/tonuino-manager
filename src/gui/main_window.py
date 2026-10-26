@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidgetItem, QListWidget, QTreeWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QSplitter,
+    QStatusBar, QSplitter, QToolButton, QApplication, QLineEdit,
     QAbstractItemView, QProgressDialog,
     QMenuBar, QStyle, QStyleOptionViewItem
 )
@@ -22,9 +22,9 @@ from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYT
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph, icon_with_hover
-from gui.track_list import HoverListWidget, reorder_with_selection
+from gui.track_list import HoverListWidget, InlineLineEdit, FloatingIconRow, reorder_with_selection
 from gui.workers import (
-    SDCardScanner, TrackAddWorker, FolderNameWorker, TrackMetaWorker, PurgeWorker,
+    SDCardScanner, TrackAddWorker, FolderNameWorker, FolderRenameWorker, TrackMetaWorker, PurgeWorker,
     LoudnessAnalysisWorker, LoudnessApplyWorker,
 )
 from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
@@ -376,10 +376,38 @@ class MainWindow(QMainWindow):
         info_col.setSpacing(2)
         info_col.addStretch(1)
 
+        # Ordnername mit Stift: Klick darauf tauscht das Label gegen ein Eingabefeld
         self.folder_title = ElidedLabel("Ordner")
         self.folder_title.setObjectName("folderTitle")
-        self.folder_title.setFixedHeight(40)
-        info_col.addWidget(self.folder_title)
+
+        self.folder_title_edit = InlineLineEdit()
+        self.folder_title_edit.setObjectName("folderTitleEdit")
+        self.folder_title_edit.setPlaceholderText("Name aus dem Album-Tag")
+        self.folder_title_edit.editingFinished.connect(self._finish_folder_title_edit)
+        self.folder_title_edit.cancelled.connect(self._cancel_folder_title_edit)
+        confirm_action_icon = self.folder_title_edit.addAction(
+            icon_from_glyph("", color=theme.GREEN, size=22),  # Check
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        confirm_action_icon.setToolTip("Name übernehmen")
+        confirm_action_icon.triggered.connect(self._finish_folder_title_edit)
+
+        self.btn_edit_folder_title = QToolButton()
+        self.btn_edit_folder_title.setObjectName("inlineEditIcon")
+        self.btn_edit_folder_title.setAutoRaise(True)
+        self.btn_edit_folder_title.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=18))  # Edit
+        self.btn_edit_folder_title.setIconSize(QSize(18, 18))
+        self.btn_edit_folder_title.setToolTip(
+            "Ordner umbenennen (der Name wird in die Tags der Tracks geschrieben)"
+        )
+        self.btn_edit_folder_title.clicked.connect(self._start_folder_title_edit)
+
+        self.folder_title_row = FloatingIconRow(
+            self.folder_title, self.folder_title_edit, self.btn_edit_folder_title
+        )
+        self.folder_title_row.setFixedHeight(40)
+        info_col.addWidget(self.folder_title_row)
 
         self.folder_subtitle = QLabel()
         self.folder_subtitle.setObjectName("folderSubtitle")
@@ -699,6 +727,87 @@ class MainWindow(QMainWindow):
                 and self.current_folder.index == folder_index:
             self._update_folder_title(self.current_folder)
 
+    def _start_folder_title_edit(self):
+        """Tauscht den Ordnernamen im Kopfbereich gegen ein Eingabefeld"""
+        folder = self.current_folder
+        if folder is None or self._is_special_folder(folder) or not folder.tracks:
+            return
+        self.folder_title_edit.setText(self._folder_name_cache.get(folder.index, ""))
+        self.folder_title_row.set_editing(True)
+        QApplication.instance().installEventFilter(self)
+        self.folder_title_edit.setFocus()
+        self.folder_title_edit.selectAll()
+
+    def eventFilter(self, obj, event):
+        """Ein Klick ausserhalb des Eingabefelds beendet die Namensbearbeitung
+        (ein Klick auf nicht fokussierbare Flaechen nimmt dem Feld sonst nie den Fokus)"""
+        if (event.type() == QEvent.Type.MouseButtonPress and self.folder_title_row.editing
+                and isinstance(obj, QWidget)
+                and obj is not self.folder_title_edit
+                and not self.folder_title_edit.isAncestorOf(obj)):
+            self._finish_folder_title_edit()
+        return super().eventFilter(obj, event)
+
+    def _cancel_folder_title_edit(self):
+        if self.folder_title_row.editing:
+            self.folder_title_edit.blockSignals(True)
+            self._end_folder_title_edit()
+            self.folder_title_edit.blockSignals(False)
+
+    def _end_folder_title_edit(self):
+        QApplication.instance().removeEventFilter(self)
+        self.folder_title_row.set_editing(False)
+        self._update_folder_action_buttons()
+
+    def _finish_folder_title_edit(self):
+        """Enter oder Fokusverlust uebernimmt den neuen Namen (Escape verwirft ihn
+        ueber InlineLineEdit.cancelled)"""
+        if not self.folder_title_row.editing:
+            return
+        name = self.folder_title_edit.text().strip()
+        self._end_folder_title_edit()
+        folder = self.current_folder
+        if folder is not None and name != self._folder_name_cache.get(folder.index, ""):
+            self._rename_folder(name)
+
+    def _rename_folder(self, name: str):
+        """Vergibt einen eigenen Ordnernamen. Er wird in die Tags aller Tracks des
+        Ordners geschrieben (die Ordnernamen auf der Karte sind durch Tonuino fest
+        vorgegeben); ein leerer Name entfernt ihn wieder, dann gilt erneut der
+        Album-Tag."""
+        folder = self.current_folder
+        if folder is None or self._is_special_folder(folder) or not folder.tracks:
+            return
+
+        self._release_files()
+        self._rename_dialog = QProgressDialog("Name wird gespeichert...", None, 0, len(folder.tracks), self)
+        self._rename_dialog.setWindowTitle("Ordner umbenennen")
+        self._rename_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._rename_dialog.setMinimumDuration(400)
+        self._rename_dialog.setValue(0)
+
+        self._rename_worker = FolderRenameWorker(folder, name, self.metadata_manager)
+        self._rename_worker.progress.connect(lambda i, total: self._rename_dialog.setValue(i))
+        self._rename_worker.completed.connect(lambda index, error: self._on_folder_renamed(index, name, error))
+        self._rename_worker.start()
+
+    def _on_folder_renamed(self, folder_index: int, name: str, error: str):
+        self._rename_dialog.close()
+        if error:
+            QMessageBox.warning(self, "Fehler beim Umbenennen", error)
+        if self.sd_card is None or folder_index not in self.sd_card.folders:
+            return
+        if name:
+            self._set_folder_name(folder_index, name)
+        else:
+            # Zurueck zur Automatik: Name erneut aus dem Album-Tag ermitteln
+            self._folder_name_cache.pop(folder_index, None)
+            self._populate_folder_list()
+            if self.current_folder is not None and self.current_folder.index == folder_index:
+                self._update_folder_title(self.current_folder)
+                self._populate_track_list(self.current_folder)
+        self.status_bar.showMessage("Ordner umbenannt" if name else "Ordnername zurückgesetzt")
+
     def _is_special_folder(self, folder: Optional[Folder]) -> bool:
         """True, wenn folder einer der nicht editierbaren Tonuio-Systemordner
         (mp3/advert) ist"""
@@ -770,6 +879,7 @@ class MainWindow(QMainWindow):
         """Zeigt einen Ordner an"""
         self.stack.setCurrentWidget(self.folder_widget)
 
+        self._cancel_folder_title_edit()
         self._update_folder_title(folder)
         # Der Pfad steht nicht mehr als Zeile da, bleibt aber als Tooltip erreichbar
         for widget in (self.folder_title, self.folder_subtitle, self.folder_meta):
@@ -784,6 +894,7 @@ class MainWindow(QMainWindow):
         """Titel und Untertitel im Kopfbereich"""
         self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
         subtitle = "Tonuino-Systemordner (nicht editierbar)" if folder.is_special else f"Ordner {folder.index:02d}"
+        self.folder_title_row.relayout()
         self.folder_subtitle.setText(subtitle)
         # Hat der Ordner keinen eigenen Namen (aus den Tags), waere der Untertitel
         # nur eine Wiederholung des Titels
@@ -795,6 +906,7 @@ class MainWindow(QMainWindow):
         editable = self.current_folder is not None and not self._is_special_folder(self.current_folder)
         self.btn_add_tracks.setEnabled(editable)
         self.btn_delete_folder.setEnabled(editable)
+        self.btn_edit_folder_title.setVisible(editable and self.current_folder.track_count > 0)
         self.btn_normalize.setEnabled(editable and self.current_folder.track_count > 0)
         self.cover_label.setEnabled(editable)
 
@@ -870,8 +982,10 @@ class MainWindow(QMainWindow):
         if folder is None or folder.is_special:
             return
         # Tracks treffen der Reihe nach ein: der erste mit Album-Tag benennt den Ordner
-        if metadata.album and folder.index not in self._folder_name_cache:
-            self._set_folder_name(folder.index, metadata.album)
+        # (ein manuell vergebener Name steht im ersten Track und geht vor)
+        name = (metadata.folder_name if row == 0 else "") or metadata.album
+        if name and folder.index not in self._folder_name_cache:
+            self._set_folder_name(folder.index, name)
         if cover_bytes:
             pixmap = QPixmap()
             if pixmap.loadFromData(cover_bytes):

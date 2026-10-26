@@ -2,8 +2,64 @@
 Track-Liste des Tonuino-Managers
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView
-from PyQt6.QtCore import QPoint, pyqtSignal
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit, QWidget
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal
+from PyQt6.QtGui import QFontMetrics
+
+
+class InlineLineEdit(QLineEdit):
+    """Eingabefeld zum direkten Bearbeiten eines Namens: Enter bzw. Fokusverlust
+    beenden die Eingabe (editingFinished), Escape verwirft sie (cancelled)."""
+    cancelled = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class FloatingIconRow(QWidget):
+    """Zeile aus Label, Eingabefeld und kleinem Symbol: Das Label ist so breit wie
+    sein Text (hoechstens die volle Breite) und das Symbol schliesst direkt daran
+    an. Im Bearbeiten-Modus fuellt das Eingabefeld die Zeile."""
+    GAP = 6
+
+    def __init__(self, label, edit, icon, parent=None):
+        super().__init__(parent)
+        self.label, self.edit, self.icon = label, edit, icon
+        for child in (label, edit, icon):
+            child.setParent(self)
+        self.editing = False
+        edit.setVisible(False)
+
+    def set_editing(self, editing: bool):
+        self.editing = editing
+        self.label.setVisible(not editing)
+        self.icon.setVisible(not editing)
+        self.edit.setVisible(editing)
+        self.relayout()
+        if editing:
+            self.edit.setFocus()
+            self.edit.selectAll()
+
+    def relayout(self):
+        width, height = self.width(), self.height()
+        if self.editing:
+            self.edit.setGeometry(0, 0, width, height)
+            return
+        icon_size = self.icon.sizeHint()
+        text_width = QFontMetrics(self.label.font()).horizontalAdvance(self.label.text()) + 4
+        label_width = max(0, min(text_width, width - icon_size.width() - self.GAP))
+        self.label.setGeometry(0, 0, label_width, height)
+        self.icon.setGeometry(
+            label_width + self.GAP, (height - icon_size.height()) // 2,
+            icon_size.width(), icon_size.height()
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.relayout()
 
 
 class HoverListWidget(QTreeWidget):
@@ -25,7 +81,10 @@ class HoverListWidget(QTreeWidget):
         header = self.header()
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # feste Breite: ResizeToContents misst bei jeder Symbol-/Textaenderung alle
+        # Zeilen neu und macht Hover und Ordnerwechsel spuerbar langsam
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(0, 110)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._hover_row = -1

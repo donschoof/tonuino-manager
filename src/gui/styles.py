@@ -625,6 +625,18 @@ QLabel#folderTitle {
     color: @TEXT@;
 }
 
+QToolButton#inlineEditIcon {
+    background: transparent;
+    border: none;
+    padding: 2px;
+}
+
+QLineEdit#folderTitleEdit {
+    font-size: 24pt;
+    font-weight: bold;
+    padding: 0px 6px;
+}
+
 QLabel#folderSubtitle {
     font-size: 15pt;
     color: @BLUE@;

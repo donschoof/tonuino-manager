@@ -67,6 +67,10 @@ class TrackAddWorker(QThread):
 
     def run(self):
         added = 0
+        # Hat der Ordner einen manuell vergebenen Namen (steht im ersten Track),
+        # erben ihn die neuen Tracks; sonst bleibt der Ordner unberuehrt
+        first = min(self.folder.tracks, key=lambda t: t.index, default=None)
+        folder_name = self.metadata_manager.read_metadata(first.filepath).folder_name if first else ""
         for i, filepath in enumerate(self.filepaths, start=1):
             if self._cancelled:
                 break
@@ -95,8 +99,12 @@ class TrackAddWorker(QThread):
                 # uebernommen, bei MP3 mitkopiert) - dort lesen statt in der Quelle,
                 # die ggf. kein MP3 ist und von mutagen.mp3 nicht gelesen werden kann.
                 metadata = self.metadata_manager.read_metadata(str(dest_path))
-                if metadata.title:
-                    self.metadata_manager.write_metadata(str(dest_path), track_number=next_number)
+                if metadata.title or folder_name:
+                    self.metadata_manager.write_metadata(
+                        str(dest_path),
+                        track_number=next_number if metadata.title else None,
+                        folder_name=folder_name or None,
+                    )
 
                 new_track = Track(
                     index=next_number,
@@ -112,6 +120,29 @@ class TrackAddWorker(QThread):
                 self.error.emit(os.path.basename(filepath), str(e))
 
         self.completed.emit(added)
+
+
+class FolderRenameWorker(QThread):
+    """Schreibt den manuell vergebenen Ordnernamen (leer = entfernen) in die Tags
+    aller Tracks des Ordners; bei vielen Dateien auf der SD-Karte dauert das."""
+    progress = pyqtSignal(int, int)  # aktueller Index, Gesamtzahl
+    completed = pyqtSignal(int, str)  # Ordnernummer, Fehlertext (leer bei Erfolg)
+
+    def __init__(self, folder: Folder, name: str, metadata_manager: MetadataManager):
+        super().__init__()
+        self.folder_index = folder.index
+        self.filepaths = [t.filepath for t in folder.tracks]
+        self.name = name
+        self.metadata_manager = metadata_manager
+
+    def run(self):
+        failed = 0
+        for i, filepath in enumerate(self.filepaths, start=1):
+            self.progress.emit(i, len(self.filepaths))
+            if not self.metadata_manager.write_metadata(filepath, folder_name=self.name):
+                failed += 1
+        error = f"{failed} von {len(self.filepaths)} Dateien konnten nicht beschrieben werden." if failed else ""
+        self.completed.emit(self.folder_index, error)
 
 
 class LoudnessAnalysisWorker(QThread):
@@ -263,12 +294,14 @@ class FolderNameWorker(QThread):
 
     def run(self):
         for folder in self.folders:
-            for track in sorted(folder.tracks, key=lambda t: t.index):
+            for position, track in enumerate(sorted(folder.tracks, key=lambda t: t.index)):
                 if self._cancelled:
                     return
-                album = self.metadata_manager.read_metadata(track.filepath).album
-                if album:
-                    self.name_found.emit(folder.index, album)
+                metadata = self.metadata_manager.read_metadata(track.filepath)
+                # Ein manuell vergebener Name steht in allen Tracks - der erste genuegt
+                name = (metadata.folder_name if position == 0 else "") or metadata.album
+                if name:
+                    self.name_found.emit(folder.index, name)
                     break
         self.completed.emit()
 
