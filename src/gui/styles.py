@@ -340,7 +340,8 @@ QListWidget::item {
 }
 
 /* Auswahlkreise der Mehrfachauswahl (wie in Apple Mail) */
-QListWidget::indicator {
+QListWidget::indicator,
+QTreeWidget#trackList::indicator {
     width: 16px;
     height: 16px;
     border-radius: 9px;
@@ -350,23 +351,32 @@ QListWidget::indicator {
 
 /* markiert: grauer Ring bleibt, innen sitzt ein deutlich kleinerer blauer Punkt
    (wie ein Radiobutton) */
-QListWidget::indicator:checked {
+QListWidget::indicator:checked,
+QTreeWidget#trackList::indicator:checked {
     background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
         stop:0 @BLUE@, stop:0.38 @BLUE@, stop:0.5 transparent, stop:1 transparent);
 }
 
 /* Track-Liste: schlanke Zeilen ohne Rahmen */
-QListWidget#trackList {
+QTreeWidget#trackList {
     background: transparent;
     border: none;
     padding: 0px;
     outline: none;
 }
 
-QListWidget#trackList::item {
-    padding: 4px 10px;
-    margin: 1px 0px;
-    border-radius: 8px;
+QTreeWidget#trackList::item {
+    padding: 4px 6px;
+    border-radius: 0px;
+}
+
+QTreeWidget#trackList QHeaderView::section {
+    background-color: transparent;
+    color: @OVERLAY0@;
+    padding: 4px 6px;
+    border: none;
+    border-bottom: 1px solid @SURFACE0@;
+    font-weight: normal;
 }
 
 QListWidget::item:selected {

@@ -2,22 +2,48 @@
 Track-Liste des Tonuino-Managers
 """
 
-from PyQt6.QtWidgets import QListWidget
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView
 from PyQt6.QtCore import QPoint, pyqtSignal
 
 
-class HoverListWidget(QListWidget):
-    """QListWidget, das meldet, ueber welcher Zeile die Maus steht (-1 = keine).
-    Dient den Abspielen-Symbolen der Track-Liste, die beim Ueberfahren erscheinen."""
+class HoverListWidget(QTreeWidget):
+    """Track-Tabelle (Track, Titel, Album) mit feststehender Kopfzeile. Meldet,
+    ueber welcher Zeile die Maus steht (-1 = keine); das dient den
+    Abspielen-Symbolen, die beim Ueberfahren erscheinen. Bietet die gewohnte
+    Listen-API (count, item, addItem, setCurrentRow) fuer die Zeilen."""
     hovered_row_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
+        self.setColumnCount(3)
+        self.setHeaderLabels(["Track", "Titel", "Album"])
+        self.setRootIsDecorated(False)
+        self.setIndentation(0)
+        self.setUniformRowHeights(True)
+        self.setAllColumnsShowFocus(True)
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._hover_row = -1
         # Position des letzten Mausklicks (Viewport-Koordinaten): itemClicked
         # liefert sie nicht mit, wird aber fuer die Klick-Zone der Symbole gebraucht
         self.last_press_pos = QPoint()
+
+    def count(self) -> int:
+        return self.topLevelItemCount()
+
+    def item(self, row: int) -> QTreeWidgetItem:
+        return self.topLevelItem(row)
+
+    def addItem(self, item: QTreeWidgetItem):
+        self.addTopLevelItem(item)
+
+    def setCurrentRow(self, row: int):
+        self.setCurrentItem(self.topLevelItem(row))
 
     def _set_hover_row(self, row: int):
         if row != self._hover_row:

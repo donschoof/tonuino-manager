@@ -32,14 +32,22 @@ class Track:
     number: str = ""
 
     @property
+    def number_label(self) -> str:
+        """Tracknummer fuer die Anzeige (leer, wenn der Track keine hat)"""
+        return self.number or (f"{self.index:03d}" if self.index else "")
+
+    @property
+    def title_label(self) -> str:
+        """Titel fuer die Anzeige, ohne Titel-Tag der Dateiname"""
+        return self.title or self.filename
+
+    @property
     def display_name(self) -> str:
         """Lesbarer Name fuer die Anzeige"""
-        label = self.number or (f"{self.index:03d}" if self.index else "")
+        label = self.number_label
         if self.title and label:
             return f"{label} - {self.title}"
-        if self.title:
-            return self.title
-        return self.filename
+        return self.title_label
 
 
 @dataclass

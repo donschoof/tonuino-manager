@@ -191,6 +191,15 @@ def test_normal_track_display_name_is_unchanged(tmp_path):
     assert track.display_name == "002 - Lied"
 
 
+def test_track_row_columns(tmp_path):
+    card = make_card(tmp_path, {"01": ["002.mp3"]})
+    track = card.folders[1].tracks[0]
+    assert (track.number_label, track.title_label, track.album) == ("002", "002.mp3", "")
+    track.title = "Lied"
+    track.album = "Mein Album"
+    assert (track.number_label, track.title_label, track.album) == ("002", "Lied", "Mein Album")
+
+
 def test_purge_leaves_system_folder_files_untouched(tmp_path):
     card = make_card(tmp_path, {"01": ["001.mp3"], "mp3": ["0001.mp3", "0007_Intro.mp3", "notes.txt"]})
 

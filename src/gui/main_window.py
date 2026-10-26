@@ -7,7 +7,7 @@ import sys
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QListWidgetItem, QListWidget,
+    QPushButton, QLabel, QListWidgetItem, QListWidget, QTreeWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
     QStatusBar, QSplitter,
     QAbstractItemView, QProgressDialog,
@@ -811,15 +811,15 @@ class MainWindow(QMainWindow):
         self.track_list.blockSignals(True)
         self.track_list.clear()
         for track in folder.tracks:
-            item = QListWidgetItem(track.display_name)
-            item.setData(Qt.ItemDataRole.UserRole, track)
+            item = QTreeWidgetItem([track.number_label, track.title_label, track.album])
+            item.setData(0, Qt.ItemDataRole.UserRole, track)
             # ItemIsUserCheckable ist standardmaessig gesetzt und wuerde den Kreis
             # selbst umschalten - dann wuerde _on_track_clicked ihn gleich wieder
             # zuruecksetzen. Das Umschalten uebernimmt deshalb allein
             # _on_track_clicked, fuer die ganze Zeile inklusive Kreis.
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             if self._multi_select_mode:
-                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             self.track_list.addItem(item)
         self.track_list.blockSignals(False)
 
@@ -858,11 +858,12 @@ class MainWindow(QMainWindow):
         if generation != self._track_meta_generation or row >= self.track_list.count():
             return
         item = self.track_list.item(row)
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         track.title = metadata.title
         track.artist = metadata.artist
         track.album = metadata.album
-        item.setText(track.display_name)
+        item.setText(1, track.title_label)
+        item.setText(2, track.album)
         self._track_meta_total += metadata.duration or 0.0
 
         folder = self.current_folder
@@ -1354,12 +1355,12 @@ class MainWindow(QMainWindow):
                 + "\n".join(self._loudness_errors[:5])
             )
 
-    def _on_track_double_clicked(self, item: QListWidgetItem):
+    def _on_track_double_clicked(self, item: QTreeWidgetItem, column: int = 0):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
         if self._is_special_folder(self.current_folder):
             return
 
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         if track:
             self._show_track_editor(track)
     
@@ -1398,14 +1399,14 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Fehler", f"Cover konnte nicht gesetzt werden: {e}")
             self._show_folder(self.current_folder)
 
-    def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+    def _on_track_current_changed(self, current: QTreeWidgetItem, previous: QTreeWidgetItem):
         """Aktualisiert die Aktions-Buttons passend zur (Einzel-)Auswahl"""
         self._update_track_action_buttons()
 
     def _checked_rows(self) -> list:
         return [
             row for row in range(self.track_list.count())
-            if self.track_list.item(row).checkState() == Qt.CheckState.Checked
+            if self.track_list.item(row).checkState(0) == Qt.CheckState.Checked
         ]
 
     def _update_track_action_buttons(self):
@@ -1453,15 +1454,15 @@ class MainWindow(QMainWindow):
         for row in range(self.track_list.count()):
             item = self.track_list.item(row)
             if enabled:
-                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             else:
-                item.setData(Qt.ItemDataRole.CheckStateRole, None)
+                item.setData(0, Qt.ItemDataRole.CheckStateRole, None)
         self.track_list.blockSignals(False)
 
         self._refresh_track_row_icons()
         self._update_track_action_buttons()
 
-    def _play_icon_rect(self, item: QListWidgetItem) -> QRect:
+    def _play_icon_rect(self, item: QTreeWidgetItem) -> QRect:
         """Bereich des Wiedergabe-Symbols in der Zeile (Viewport-Koordinaten).
         Im Einzelmodus ist das der Symbolbereich links, im Mehrfachauswahl-Modus
         der Streifen zwischen Auswahlkreis und Textanfang. Die Positionen
@@ -1474,7 +1475,7 @@ class MainWindow(QMainWindow):
         opt.rect = row_rect
         opt.decorationSize = QSize(18, 18)
         opt.font = self.track_list.font()
-        opt.text = item.text()
+        opt.text = item.text(0)
         opt.features = (
             QStyleOptionViewItem.ViewItemFeature.HasDecoration
             | QStyleOptionViewItem.ViewItemFeature.HasDisplay
@@ -1486,23 +1487,23 @@ class MainWindow(QMainWindow):
             return icon.adjusted(-8, -8, 8, 8)
 
         opt.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-        opt.checkState = item.checkState()
+        opt.checkState = item.checkState(0)
         indicator = style.subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator, opt, self.track_list)
         text = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, self.track_list)
         return QRect(indicator.right() + 1, row_rect.top(), text.left() + 8 - indicator.right() - 1, row_rect.height())
 
-    def _on_track_clicked(self, item: QListWidgetItem):
+    def _on_track_clicked(self, item: QTreeWidgetItem, column: int = 0):
         """Ein Klick auf das Wiedergabe-Symbol startet/pausiert den Track. Sonst
         markiert/entmarkiert ein Klick den Track im Mehrfachauswahl-Modus
         (Kreis und restliche Zeile), im Einzelmodus waehlt er ihn nur aus."""
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         if track and self._play_icon_rect(item).contains(self.track_list.last_press_pos):
             self.player_bar.toggle_track(track.filepath, track.display_name)
             return
         if not self._multi_select_mode:
             return
-        checked = item.checkState() == Qt.CheckState.Checked
-        item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
+        checked = item.checkState(0) == Qt.CheckState.Checked
+        item.setCheckState(0, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
         self._update_track_action_buttons()
 
     def _player_track_info(self, filepath: str) -> TrackInfo:
@@ -1560,7 +1561,7 @@ class MainWindow(QMainWindow):
         playing = self.player_bar.is_playing()
         for row in range(self.track_list.count()):
             item = self.track_list.item(row)
-            track = item.data(Qt.ItemDataRole.UserRole)
+            track = item.data(0, Qt.ItemDataRole.UserRole)
             is_current = bool(track) and self.player_bar.is_current(track.filepath)
             hovered = row == self._hover_row
 
@@ -1570,7 +1571,7 @@ class MainWindow(QMainWindow):
                 kind = "speaker"
             else:
                 kind = "blank"
-            item.setIcon(self._row_icon(kind))
+            item.setIcon(0, self._row_icon(kind))
 
     def _play_previous_track(self):
         self._play_relative_track(-1)
@@ -1604,9 +1605,9 @@ class MainWindow(QMainWindow):
         """Die Tracks, auf die Aktionen wirken: im Mehrfachauswahl-Modus alle
         markierten, sonst der aktuell ausgewaehlte"""
         if self._multi_select_mode:
-            return [self.track_list.item(row).data(Qt.ItemDataRole.UserRole) for row in self._checked_rows()]
+            return [self.track_list.item(row).data(0, Qt.ItemDataRole.UserRole) for row in self._checked_rows()]
         current_item = self.track_list.currentItem()
-        return [current_item.data(Qt.ItemDataRole.UserRole)] if current_item else []
+        return [current_item.data(0, Qt.ItemDataRole.UserRole)] if current_item else []
 
     def _delete_selected_tracks(self):
         """Loescht die ausgewaehlten Tracks von der SD-Karte und
@@ -1665,7 +1666,7 @@ class MainWindow(QMainWindow):
             self._populate_track_list(self.current_folder)
             if self._multi_select_mode:
                 for row in moved_rows:
-                    self.track_list.item(row).setCheckState(Qt.CheckState.Checked)
+                    self.track_list.item(row).setCheckState(0, Qt.CheckState.Checked)
                 self._update_track_action_buttons()
             else:
                 self.track_list.setCurrentRow(moved_rows[0])
