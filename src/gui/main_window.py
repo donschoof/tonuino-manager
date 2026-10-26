@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QProgressDialog,
     QMenuBar, QStyle, QStyleOptionViewItem
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect, QProcess, QProcessEnvironment
 from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup
 
 from core import __version__, loudness
@@ -211,6 +211,18 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        theme_menu = menu.addMenu("Design")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for key, label in (("dark", "Dunkel"), ("light", "Hell")):
+            action = theme_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(theme.current == key)
+            action.triggered.connect(lambda _checked, k=key: self._on_theme_selected(k))
+            theme_group.addAction(action)
+
+        menu.addSeparator()
+
         reader_menu = menu.addMenu("RFID-Leser")
         reader_group = QActionGroup(self)
         reader_group.setExclusive(True)
@@ -229,6 +241,35 @@ class MainWindow(QMainWindow):
             lambda: self.rfid_panel.set_reader_mode(RfidPanel.READER_MODE_TONUINO)
         )
         reader_group.addAction(action_reader_tonuino)
+
+    def _on_theme_selected(self, key: str):
+        """Speichert das gewaehlte Design. Icons und Farben werden beim Start
+        aufgebaut, deshalb wirkt die Aenderung erst nach einem Neustart."""
+        if key == theme.current:
+            return
+        QSettings().setValue(theme.SETTINGS_KEY, key)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Design ändern")
+        box.setText("Das neue Design wird nach einem Neustart der Anwendung aktiv.")
+        restart = box.addButton("Jetzt neu starten", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Später", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is restart:
+            self._restart_application()
+
+    def _restart_application(self):
+        """Startet die Anwendung neu (fragt vorher nach, falls noch etwas laeuft)"""
+        process = QProcess()
+        process.setProgram(sys.executable)
+        # gebuendelt ist sys.executable die EXE selbst, sonst der Interpreter + Skript
+        process.setArguments(sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
+        # Der neue Prozess soll sich nicht auf das Temp-Verzeichnis des alten stuetzen
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYINSTALLER_RESET_ENVIRONMENT", "1")
+        process.setProcessEnvironment(environment)
+        if process.startDetached():
+            self.close()
 
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""

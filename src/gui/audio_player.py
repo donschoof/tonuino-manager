@@ -59,7 +59,7 @@ _ICON_VOLUME_OFF = "\ue04f"   # volume_off
 
 
 # Farbe deaktivierter Steuerelemente (muss zu QSlider:disabled/QLabel:disabled in styles.py passen)
-_DISABLED_COLOR = theme.SURFACE1
+_DISABLED_COLOR = theme.DISABLED_ICON
 _PLAY_ICON_SIZE = 28  # Symbol im hellen Play-Kreis (Button 44 px)
 
 
@@ -559,7 +559,7 @@ class AudioPlayerBar(QFrame):
         silent = self._muted or value == 0
 
         if silent:
-            glyph, main_color = _ICON_VOLUME_OFF, theme.SURFACE2
+            glyph, main_color = _ICON_VOLUME_OFF, theme.DISABLED
         elif value < 50:
             glyph, main_color = _ICON_VOLUME_DOWN, theme.OVERLAY2
         else:

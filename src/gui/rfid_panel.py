@@ -678,7 +678,7 @@ class RfidPanel(QFrame):
         """Faerbt das Loeschen-Icon rot (Karte enthaelt Daten) oder grau
         (nichts zu loeschen) und blockt Klicks im deaktivierten Zustand -
         wie bei einem echten (aber unsichtbaren) Button."""
-        color = theme.RED if enabled else theme.SURFACE2
+        color = theme.RED if enabled else theme.DISABLED
         self.erase_card_icon.setPixmap(icon_from_glyph("", color=color, size=20).pixmap(20, 20))
         self.erase_card_icon.setEnabled(enabled)
 
