@@ -23,7 +23,7 @@ class FloatingIconRow(QWidget):
     """Zeile aus Label, Eingabefeld und kleinem Symbol: Das Label ist so breit wie
     sein Text (hoechstens die volle Breite) und das Symbol schliesst direkt daran
     an. Im Bearbeiten-Modus fuellt das Eingabefeld die Zeile."""
-    GAP = 6
+    GAP = 0
 
     def __init__(self, label, edit, icon, parent=None):
         super().__init__(parent)
