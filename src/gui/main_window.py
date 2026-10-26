@@ -396,8 +396,8 @@ class MainWindow(QMainWindow):
         self.btn_edit_folder_title.setObjectName("inlineEditIcon")
         self.btn_edit_folder_title.setAutoRaise(True)
         self.btn_edit_folder_title.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=18))  # Edit
-        self.btn_edit_folder_title.setIconSize(QSize(18, 18))
+        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=32))  # Edit
+        self.btn_edit_folder_title.setIconSize(QSize(32, 32))
         self.btn_edit_folder_title.setToolTip(
             "Ordner umbenennen (der Name wird in die Tags der Tracks geschrieben)"
         )
