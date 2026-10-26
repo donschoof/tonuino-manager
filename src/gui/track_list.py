@@ -2,22 +2,107 @@
 Track-Liste des Tonuino-Managers
 """
 
-from PyQt6.QtWidgets import QListWidget
-from PyQt6.QtCore import QPoint, pyqtSignal
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit, QWidget
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal
+from PyQt6.QtGui import QFontMetrics
 
 
-class HoverListWidget(QListWidget):
-    """QListWidget, das meldet, ueber welcher Zeile die Maus steht (-1 = keine).
-    Dient den Abspielen-Symbolen der Track-Liste, die beim Ueberfahren erscheinen."""
+class InlineLineEdit(QLineEdit):
+    """Eingabefeld zum direkten Bearbeiten eines Namens: Enter bzw. Fokusverlust
+    beenden die Eingabe (editingFinished), Escape verwirft sie (cancelled)."""
+    cancelled = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class FloatingIconRow(QWidget):
+    """Zeile aus Label, Eingabefeld und kleinem Symbol: Das Label ist so breit wie
+    sein Text (hoechstens die volle Breite) und das Symbol schliesst direkt daran
+    an. Im Bearbeiten-Modus fuellt das Eingabefeld die Zeile."""
+    GAP = 0
+
+    def __init__(self, label, edit, icon, parent=None):
+        super().__init__(parent)
+        self.label, self.edit, self.icon = label, edit, icon
+        for child in (label, edit, icon):
+            child.setParent(self)
+        self.editing = False
+        edit.setVisible(False)
+
+    def set_editing(self, editing: bool):
+        self.editing = editing
+        self.label.setVisible(not editing)
+        self.icon.setVisible(not editing)
+        self.edit.setVisible(editing)
+        self.relayout()
+        if editing:
+            self.edit.setFocus()
+            self.edit.selectAll()
+
+    def relayout(self):
+        width, height = self.width(), self.height()
+        if self.editing:
+            self.edit.setGeometry(0, 0, width, height)
+            return
+        icon_size = self.icon.sizeHint()
+        text_width = QFontMetrics(self.label.font()).horizontalAdvance(self.label.text()) + 4
+        label_width = max(0, min(text_width, width - icon_size.width() - self.GAP))
+        self.label.setGeometry(0, 0, label_width, height)
+        self.icon.setGeometry(
+            label_width + self.GAP, (height - icon_size.height()) // 2,
+            icon_size.width(), icon_size.height()
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.relayout()
+
+
+class HoverListWidget(QTreeWidget):
+    """Track-Tabelle (Track, Titel, Album) mit feststehender Kopfzeile. Meldet,
+    ueber welcher Zeile die Maus steht (-1 = keine); das dient den
+    Abspielen-Symbolen, die beim Ueberfahren erscheinen. Bietet die gewohnte
+    Listen-API (count, item, addItem, setCurrentRow) fuer die Zeilen."""
     hovered_row_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
+        self.setColumnCount(3)
+        self.setHeaderLabels(["Track", "Titel", "Album"])
+        self.setRootIsDecorated(False)
+        self.setIndentation(0)
+        self.setUniformRowHeights(True)
+        self.setAllColumnsShowFocus(True)
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(False)
+        # feste Breite: ResizeToContents misst bei jeder Symbol-/Textaenderung alle
+        # Zeilen neu und macht Hover und Ordnerwechsel spuerbar langsam
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(0, 110)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._hover_row = -1
         # Position des letzten Mausklicks (Viewport-Koordinaten): itemClicked
         # liefert sie nicht mit, wird aber fuer die Klick-Zone der Symbole gebraucht
         self.last_press_pos = QPoint()
+
+    def count(self) -> int:
+        return self.topLevelItemCount()
+
+    def item(self, row: int) -> QTreeWidgetItem:
+        return self.topLevelItem(row)
+
+    def addItem(self, item: QTreeWidgetItem):
+        self.addTopLevelItem(item)
+
+    def setCurrentRow(self, row: int):
+        self.setCurrentItem(self.topLevelItem(row))
 
     def _set_hover_row(self, row: int):
         if row != self._hover_row:

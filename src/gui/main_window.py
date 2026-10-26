@@ -7,13 +7,13 @@ import sys
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QListWidgetItem, QListWidget,
+    QPushButton, QLabel, QListWidgetItem, QListWidget, QTreeWidgetItem,
     QStackedWidget, QFrame, QFileDialog, QMessageBox,
-    QStatusBar, QSplitter,
+    QStatusBar, QSplitter, QToolButton, QApplication, QLineEdit,
     QAbstractItemView, QProgressDialog,
     QMenuBar, QStyle, QStyleOptionViewItem
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect, QProcess, QProcessEnvironment
 from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup
 
 from core import __version__, loudness
@@ -22,9 +22,9 @@ from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYT
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph, icon_with_hover
-from gui.track_list import HoverListWidget, reorder_with_selection
+from gui.track_list import HoverListWidget, InlineLineEdit, FloatingIconRow, reorder_with_selection
 from gui.workers import (
-    SDCardScanner, TrackAddWorker, FolderNameWorker, TrackMetaWorker, PurgeWorker,
+    SDCardScanner, TrackAddWorker, FolderNameWorker, FolderRenameWorker, TrackMetaWorker, PurgeWorker,
     LoudnessAnalysisWorker, LoudnessApplyWorker,
 )
 from gui.audio_player import AudioPlayerBar, ElidedLabel, TrackInfo
@@ -211,6 +211,18 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        theme_menu = menu.addMenu("Design")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for key, label in (("dark", "Dunkel"), ("light", "Hell")):
+            action = theme_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(theme.current == key)
+            action.triggered.connect(lambda _checked, k=key: self._on_theme_selected(k))
+            theme_group.addAction(action)
+
+        menu.addSeparator()
+
         reader_menu = menu.addMenu("RFID-Leser")
         reader_group = QActionGroup(self)
         reader_group.setExclusive(True)
@@ -229,6 +241,35 @@ class MainWindow(QMainWindow):
             lambda: self.rfid_panel.set_reader_mode(RfidPanel.READER_MODE_TONUINO)
         )
         reader_group.addAction(action_reader_tonuino)
+
+    def _on_theme_selected(self, key: str):
+        """Speichert das gewaehlte Design. Icons und Farben werden beim Start
+        aufgebaut, deshalb wirkt die Aenderung erst nach einem Neustart."""
+        if key == theme.current:
+            return
+        QSettings().setValue(theme.SETTINGS_KEY, key)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Design ändern")
+        box.setText("Das neue Design wird nach einem Neustart der Anwendung aktiv.")
+        restart = box.addButton("Jetzt neu starten", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Später", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is restart:
+            self._restart_application()
+
+    def _restart_application(self):
+        """Startet die Anwendung neu (fragt vorher nach, falls noch etwas laeuft)"""
+        process = QProcess()
+        process.setProgram(sys.executable)
+        # gebuendelt ist sys.executable die EXE selbst, sonst der Interpreter + Skript
+        process.setArguments(sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
+        # Der neue Prozess soll sich nicht auf das Temp-Verzeichnis des alten stuetzen
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYINSTALLER_RESET_ENVIRONMENT", "1")
+        process.setProcessEnvironment(environment)
+        if process.startDetached():
+            self.close()
 
     def _create_sidebar(self) -> QFrame:
         """Erstellt die Sidebar"""
@@ -376,10 +417,38 @@ class MainWindow(QMainWindow):
         info_col.setSpacing(2)
         info_col.addStretch(1)
 
+        # Ordnername mit Stift: Klick darauf tauscht das Label gegen ein Eingabefeld
         self.folder_title = ElidedLabel("Ordner")
         self.folder_title.setObjectName("folderTitle")
-        self.folder_title.setFixedHeight(40)
-        info_col.addWidget(self.folder_title)
+
+        self.folder_title_edit = InlineLineEdit()
+        self.folder_title_edit.setObjectName("folderTitleEdit")
+        self.folder_title_edit.setPlaceholderText("Name aus dem Album-Tag")
+        self.folder_title_edit.editingFinished.connect(self._finish_folder_title_edit)
+        self.folder_title_edit.cancelled.connect(self._cancel_folder_title_edit)
+        confirm_action_icon = self.folder_title_edit.addAction(
+            icon_from_glyph("", color=theme.GREEN, size=22),  # Check
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        confirm_action_icon.setToolTip("Name übernehmen")
+        confirm_action_icon.triggered.connect(self._finish_folder_title_edit)
+
+        self.btn_edit_folder_title = QToolButton()
+        self.btn_edit_folder_title.setObjectName("inlineEditIcon")
+        self.btn_edit_folder_title.setAutoRaise(True)
+        self.btn_edit_folder_title.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=32))  # Edit
+        self.btn_edit_folder_title.setIconSize(QSize(32, 32))
+        self.btn_edit_folder_title.setToolTip(
+            "Ordner umbenennen (der Name wird in die Tags der Tracks geschrieben)"
+        )
+        self.btn_edit_folder_title.clicked.connect(self._start_folder_title_edit)
+
+        self.folder_title_row = FloatingIconRow(
+            self.folder_title, self.folder_title_edit, self.btn_edit_folder_title
+        )
+        self.folder_title_row.setFixedHeight(40)
+        info_col.addWidget(self.folder_title_row)
 
         self.folder_subtitle = QLabel()
         self.folder_subtitle.setObjectName("folderSubtitle")
@@ -699,6 +768,87 @@ class MainWindow(QMainWindow):
                 and self.current_folder.index == folder_index:
             self._update_folder_title(self.current_folder)
 
+    def _start_folder_title_edit(self):
+        """Tauscht den Ordnernamen im Kopfbereich gegen ein Eingabefeld"""
+        folder = self.current_folder
+        if folder is None or self._is_special_folder(folder) or not folder.tracks:
+            return
+        self.folder_title_edit.setText(self._folder_name_cache.get(folder.index, ""))
+        self.folder_title_row.set_editing(True)
+        QApplication.instance().installEventFilter(self)
+        self.folder_title_edit.setFocus()
+        self.folder_title_edit.selectAll()
+
+    def eventFilter(self, obj, event):
+        """Ein Klick ausserhalb des Eingabefelds beendet die Namensbearbeitung
+        (ein Klick auf nicht fokussierbare Flaechen nimmt dem Feld sonst nie den Fokus)"""
+        if (event.type() == QEvent.Type.MouseButtonPress and self.folder_title_row.editing
+                and isinstance(obj, QWidget)
+                and obj is not self.folder_title_edit
+                and not self.folder_title_edit.isAncestorOf(obj)):
+            self._finish_folder_title_edit()
+        return super().eventFilter(obj, event)
+
+    def _cancel_folder_title_edit(self):
+        if self.folder_title_row.editing:
+            self.folder_title_edit.blockSignals(True)
+            self._end_folder_title_edit()
+            self.folder_title_edit.blockSignals(False)
+
+    def _end_folder_title_edit(self):
+        QApplication.instance().removeEventFilter(self)
+        self.folder_title_row.set_editing(False)
+        self._update_folder_action_buttons()
+
+    def _finish_folder_title_edit(self):
+        """Enter oder Fokusverlust uebernimmt den neuen Namen (Escape verwirft ihn
+        ueber InlineLineEdit.cancelled)"""
+        if not self.folder_title_row.editing:
+            return
+        name = self.folder_title_edit.text().strip()
+        self._end_folder_title_edit()
+        folder = self.current_folder
+        if folder is not None and name != self._folder_name_cache.get(folder.index, ""):
+            self._rename_folder(name)
+
+    def _rename_folder(self, name: str):
+        """Vergibt einen eigenen Ordnernamen. Er wird in die Tags aller Tracks des
+        Ordners geschrieben (die Ordnernamen auf der Karte sind durch Tonuino fest
+        vorgegeben); ein leerer Name entfernt ihn wieder, dann gilt erneut der
+        Album-Tag."""
+        folder = self.current_folder
+        if folder is None or self._is_special_folder(folder) or not folder.tracks:
+            return
+
+        self._release_files()
+        self._rename_dialog = QProgressDialog("Name wird gespeichert...", None, 0, len(folder.tracks), self)
+        self._rename_dialog.setWindowTitle("Ordner umbenennen")
+        self._rename_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._rename_dialog.setMinimumDuration(400)
+        self._rename_dialog.setValue(0)
+
+        self._rename_worker = FolderRenameWorker(folder, name, self.metadata_manager)
+        self._rename_worker.progress.connect(lambda i, total: self._rename_dialog.setValue(i))
+        self._rename_worker.completed.connect(lambda index, error: self._on_folder_renamed(index, name, error))
+        self._rename_worker.start()
+
+    def _on_folder_renamed(self, folder_index: int, name: str, error: str):
+        self._rename_dialog.close()
+        if error:
+            QMessageBox.warning(self, "Fehler beim Umbenennen", error)
+        if self.sd_card is None or folder_index not in self.sd_card.folders:
+            return
+        if name:
+            self._set_folder_name(folder_index, name)
+        else:
+            # Zurueck zur Automatik: Name erneut aus dem Album-Tag ermitteln
+            self._folder_name_cache.pop(folder_index, None)
+            self._populate_folder_list()
+            if self.current_folder is not None and self.current_folder.index == folder_index:
+                self._update_folder_title(self.current_folder)
+                self._populate_track_list(self.current_folder)
+        self.status_bar.showMessage("Ordner umbenannt" if name else "Ordnername zurückgesetzt")
+
     def _is_special_folder(self, folder: Optional[Folder]) -> bool:
         """True, wenn folder einer der nicht editierbaren Tonuio-Systemordner
         (mp3/advert) ist"""
@@ -770,6 +920,7 @@ class MainWindow(QMainWindow):
         """Zeigt einen Ordner an"""
         self.stack.setCurrentWidget(self.folder_widget)
 
+        self._cancel_folder_title_edit()
         self._update_folder_title(folder)
         # Der Pfad steht nicht mehr als Zeile da, bleibt aber als Tooltip erreichbar
         for widget in (self.folder_title, self.folder_subtitle, self.folder_meta):
@@ -784,6 +935,7 @@ class MainWindow(QMainWindow):
         """Titel und Untertitel im Kopfbereich"""
         self.folder_title.setText(folder.name if folder.is_special else self._resolve_folder_name(folder))
         subtitle = "Tonuino-Systemordner (nicht editierbar)" if folder.is_special else f"Ordner {folder.index:02d}"
+        self.folder_title_row.relayout()
         self.folder_subtitle.setText(subtitle)
         # Hat der Ordner keinen eigenen Namen (aus den Tags), waere der Untertitel
         # nur eine Wiederholung des Titels
@@ -795,6 +947,7 @@ class MainWindow(QMainWindow):
         editable = self.current_folder is not None and not self._is_special_folder(self.current_folder)
         self.btn_add_tracks.setEnabled(editable)
         self.btn_delete_folder.setEnabled(editable)
+        self.btn_edit_folder_title.setVisible(editable and self.current_folder.track_count > 0)
         self.btn_normalize.setEnabled(editable and self.current_folder.track_count > 0)
         self.cover_label.setEnabled(editable)
 
@@ -811,15 +964,15 @@ class MainWindow(QMainWindow):
         self.track_list.blockSignals(True)
         self.track_list.clear()
         for track in folder.tracks:
-            item = QListWidgetItem(track.display_name)
-            item.setData(Qt.ItemDataRole.UserRole, track)
+            item = QTreeWidgetItem([track.number_label, track.title_label, track.album])
+            item.setData(0, Qt.ItemDataRole.UserRole, track)
             # ItemIsUserCheckable ist standardmaessig gesetzt und wuerde den Kreis
             # selbst umschalten - dann wuerde _on_track_clicked ihn gleich wieder
             # zuruecksetzen. Das Umschalten uebernimmt deshalb allein
             # _on_track_clicked, fuer die ganze Zeile inklusive Kreis.
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             if self._multi_select_mode:
-                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             self.track_list.addItem(item)
         self.track_list.blockSignals(False)
 
@@ -858,19 +1011,22 @@ class MainWindow(QMainWindow):
         if generation != self._track_meta_generation or row >= self.track_list.count():
             return
         item = self.track_list.item(row)
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         track.title = metadata.title
         track.artist = metadata.artist
         track.album = metadata.album
-        item.setText(track.display_name)
+        item.setText(1, track.title_label)
+        item.setText(2, track.album)
         self._track_meta_total += metadata.duration or 0.0
 
         folder = self.current_folder
         if folder is None or folder.is_special:
             return
         # Tracks treffen der Reihe nach ein: der erste mit Album-Tag benennt den Ordner
-        if metadata.album and folder.index not in self._folder_name_cache:
-            self._set_folder_name(folder.index, metadata.album)
+        # (ein manuell vergebener Name steht im ersten Track und geht vor)
+        name = (metadata.folder_name if row == 0 else "") or metadata.album
+        if name and folder.index not in self._folder_name_cache:
+            self._set_folder_name(folder.index, name)
         if cover_bytes:
             pixmap = QPixmap()
             if pixmap.loadFromData(cover_bytes):
@@ -1354,12 +1510,12 @@ class MainWindow(QMainWindow):
                 + "\n".join(self._loudness_errors[:5])
             )
 
-    def _on_track_double_clicked(self, item: QListWidgetItem):
+    def _on_track_double_clicked(self, item: QTreeWidgetItem, column: int = 0):
         """Wird aufgerufen wenn ein Track doppelt geklickt wird"""
         if self._is_special_folder(self.current_folder):
             return
 
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         if track:
             self._show_track_editor(track)
     
@@ -1398,14 +1554,14 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Fehler", f"Cover konnte nicht gesetzt werden: {e}")
             self._show_folder(self.current_folder)
 
-    def _on_track_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+    def _on_track_current_changed(self, current: QTreeWidgetItem, previous: QTreeWidgetItem):
         """Aktualisiert die Aktions-Buttons passend zur (Einzel-)Auswahl"""
         self._update_track_action_buttons()
 
     def _checked_rows(self) -> list:
         return [
             row for row in range(self.track_list.count())
-            if self.track_list.item(row).checkState() == Qt.CheckState.Checked
+            if self.track_list.item(row).checkState(0) == Qt.CheckState.Checked
         ]
 
     def _update_track_action_buttons(self):
@@ -1453,15 +1609,15 @@ class MainWindow(QMainWindow):
         for row in range(self.track_list.count()):
             item = self.track_list.item(row)
             if enabled:
-                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             else:
-                item.setData(Qt.ItemDataRole.CheckStateRole, None)
+                item.setData(0, Qt.ItemDataRole.CheckStateRole, None)
         self.track_list.blockSignals(False)
 
         self._refresh_track_row_icons()
         self._update_track_action_buttons()
 
-    def _play_icon_rect(self, item: QListWidgetItem) -> QRect:
+    def _play_icon_rect(self, item: QTreeWidgetItem) -> QRect:
         """Bereich des Wiedergabe-Symbols in der Zeile (Viewport-Koordinaten).
         Im Einzelmodus ist das der Symbolbereich links, im Mehrfachauswahl-Modus
         der Streifen zwischen Auswahlkreis und Textanfang. Die Positionen
@@ -1474,7 +1630,7 @@ class MainWindow(QMainWindow):
         opt.rect = row_rect
         opt.decorationSize = QSize(18, 18)
         opt.font = self.track_list.font()
-        opt.text = item.text()
+        opt.text = item.text(0)
         opt.features = (
             QStyleOptionViewItem.ViewItemFeature.HasDecoration
             | QStyleOptionViewItem.ViewItemFeature.HasDisplay
@@ -1486,23 +1642,23 @@ class MainWindow(QMainWindow):
             return icon.adjusted(-8, -8, 8, 8)
 
         opt.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-        opt.checkState = item.checkState()
+        opt.checkState = item.checkState(0)
         indicator = style.subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator, opt, self.track_list)
         text = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, self.track_list)
         return QRect(indicator.right() + 1, row_rect.top(), text.left() + 8 - indicator.right() - 1, row_rect.height())
 
-    def _on_track_clicked(self, item: QListWidgetItem):
+    def _on_track_clicked(self, item: QTreeWidgetItem, column: int = 0):
         """Ein Klick auf das Wiedergabe-Symbol startet/pausiert den Track. Sonst
         markiert/entmarkiert ein Klick den Track im Mehrfachauswahl-Modus
         (Kreis und restliche Zeile), im Einzelmodus waehlt er ihn nur aus."""
-        track = item.data(Qt.ItemDataRole.UserRole)
+        track = item.data(0, Qt.ItemDataRole.UserRole)
         if track and self._play_icon_rect(item).contains(self.track_list.last_press_pos):
             self.player_bar.toggle_track(track.filepath, track.display_name)
             return
         if not self._multi_select_mode:
             return
-        checked = item.checkState() == Qt.CheckState.Checked
-        item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
+        checked = item.checkState(0) == Qt.CheckState.Checked
+        item.setCheckState(0, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
         self._update_track_action_buttons()
 
     def _player_track_info(self, filepath: str) -> TrackInfo:
@@ -1560,7 +1716,7 @@ class MainWindow(QMainWindow):
         playing = self.player_bar.is_playing()
         for row in range(self.track_list.count()):
             item = self.track_list.item(row)
-            track = item.data(Qt.ItemDataRole.UserRole)
+            track = item.data(0, Qt.ItemDataRole.UserRole)
             is_current = bool(track) and self.player_bar.is_current(track.filepath)
             hovered = row == self._hover_row
 
@@ -1570,7 +1726,7 @@ class MainWindow(QMainWindow):
                 kind = "speaker"
             else:
                 kind = "blank"
-            item.setIcon(self._row_icon(kind))
+            item.setIcon(0, self._row_icon(kind))
 
     def _play_previous_track(self):
         self._play_relative_track(-1)
@@ -1604,9 +1760,9 @@ class MainWindow(QMainWindow):
         """Die Tracks, auf die Aktionen wirken: im Mehrfachauswahl-Modus alle
         markierten, sonst der aktuell ausgewaehlte"""
         if self._multi_select_mode:
-            return [self.track_list.item(row).data(Qt.ItemDataRole.UserRole) for row in self._checked_rows()]
+            return [self.track_list.item(row).data(0, Qt.ItemDataRole.UserRole) for row in self._checked_rows()]
         current_item = self.track_list.currentItem()
-        return [current_item.data(Qt.ItemDataRole.UserRole)] if current_item else []
+        return [current_item.data(0, Qt.ItemDataRole.UserRole)] if current_item else []
 
     def _delete_selected_tracks(self):
         """Loescht die ausgewaehlten Tracks von der SD-Karte und
@@ -1665,7 +1821,7 @@ class MainWindow(QMainWindow):
             self._populate_track_list(self.current_folder)
             if self._multi_select_mode:
                 for row in moved_rows:
-                    self.track_list.item(row).setCheckState(Qt.CheckState.Checked)
+                    self.track_list.item(row).setCheckState(0, Qt.CheckState.Checked)
                 self._update_track_action_buttons()
             else:
                 self.track_list.setCurrentRow(moved_rows[0])

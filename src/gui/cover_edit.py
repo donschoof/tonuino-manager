@@ -99,13 +99,13 @@ class CoverEditWidget(QWidget):
 
         if self._hovered and self.isEnabled():
             painter.fillRect(rect, QColor(17, 17, 27, 190))
-            self._draw_glyph(painter, _GLYPH_EDIT, self.height() * 0.2, QColor(theme.TEXT), rect, -0.07)
+            self._draw_glyph(painter, _GLYPH_EDIT, self.height() * 0.2, QColor(theme.SCRIM_TEXT), rect, -0.07)
 
             font = QFont(self.font())
             font.setBold(True)
             font.setPointSizeF(10)
             painter.setFont(font)
-            painter.setPen(QColor(theme.TEXT))
+            painter.setPen(QColor(theme.SCRIM_TEXT))
             text = "Cover ändern" if self._pixmap is not None else "Cover hinzufügen"
             text_rect = QRectF(rect.left(), rect.center().y() + self.height() * 0.02, rect.width(), self.height() * 0.3)
             painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop), text)

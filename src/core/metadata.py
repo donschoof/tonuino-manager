@@ -11,6 +11,10 @@ import time
 
 log = logging.getLogger(__name__)
 
+# Benutzerdefinierter ID3-Frame (TXXX) fuer den manuell vergebenen Ordnernamen
+FOLDER_NAME_DESC = "TONUINO_FOLDER_NAME"
+FOLDER_NAME_KEY = f"TXXX:{FOLDER_NAME_DESC}"
+
 
 @dataclass
 class TrackMetadata:
@@ -26,6 +30,7 @@ class TrackMetadata:
     duration: float = 0.0
     has_cover: bool = False
     cover_mime: str = ""
+    folder_name: str = ""  # manuell vergebener Ordnername (leer = nicht gesetzt)
 
 
 class MetadataManager:
@@ -93,6 +98,8 @@ class MetadataManager:
                         metadata.total_tracks = int(parts[1]) if parts[1].isdigit() else 0
                     elif track_str.isdigit():
                         metadata.track_number = int(track_str)
+                if FOLDER_NAME_KEY in tags:
+                    metadata.folder_name = str(tags[FOLDER_NAME_KEY])
                 if 'TCON' in tags:
                     metadata.genre = str(tags['TCON'])
                 if 'TDRC' in tags:
@@ -120,7 +127,8 @@ class MetadataManager:
         track_number: Optional[int] = None,
         total_tracks: int = 0,
         genre: Optional[str] = None,
-        year: Optional[str] = None
+        year: Optional[str] = None,
+        folder_name: Optional[str] = None
     ) -> bool:
         """Schreibt Metadaten in eine MP3-Datei.
 
@@ -130,7 +138,7 @@ class MetadataManager:
             return False
 
         try:
-            from mutagen.id3 import TIT2, TPE1, TALB, TPE2, TRCK, TCON, TDRC
+            from mutagen.id3 import TIT2, TPE1, TALB, TPE2, TRCK, TCON, TDRC, TXXX
 
             audio = self._open_mp3(filepath)
 
@@ -160,6 +168,11 @@ class MetadataManager:
                     tags.delall("TRCK")
             apply("TCON", TCON, genre)
             apply("TDRC", TDRC, year)
+            if folder_name is not None:
+                if folder_name:
+                    tags[FOLDER_NAME_KEY] = TXXX(encoding=3, desc=FOLDER_NAME_DESC, text=folder_name)
+                else:
+                    tags.delall(FOLDER_NAME_KEY)
 
             audio.save()
             return True
