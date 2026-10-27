@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QMenuBar, QStyle, QStyleOptionViewItem
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, QEvent, QPoint, QRect, QProcess, QProcessEnvironment
-from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup
+from PyQt6.QtGui import QCursor, QPixmap, QIcon, QActionGroup, QBrush, QColor
 
 from core import __version__, loudness
 from core.sd_card import SDCard, Folder, Track, PurgePreview, MAX_TRACKS_PER_FOLDER
@@ -22,7 +22,7 @@ from core.drive_check import get_total_size, is_removable_drive, MAX_SD_CARD_BYT
 from core.audio_converter import AudioConverter
 from core.metadata import MetadataManager
 from gui.common import resource_path, heading_font, confirm_action, icon_from_glyph, icon_with_hover
-from gui.track_list import HoverListWidget, InlineLineEdit, FloatingIconRow, reorder_with_selection
+from gui.track_list import ROW_NOT_CHECKABLE_ROLE, HoverListWidget, InlineLineEdit, FloatingIconRow, reorder_with_selection
 from gui.workers import (
     SDCardScanner, TrackAddWorker, FolderNameWorker, FolderRenameWorker, TrackMetaWorker, PurgeWorker,
     LoudnessAnalysisWorker, LoudnessApplyWorker,
@@ -33,6 +33,11 @@ from gui.rfid_panel import RfidPanel
 from gui.update_controller import UpdateController
 from gui.title_bar import TitleBar
 from gui import theme
+
+# Einstellung "Alle MP3 Dateien anzeigen" (Standard: aus)
+SHOW_ALL_MP3_KEY = "library/show_all_mp3"
+# Zuletzt geoeffneter SD-Karten-Pfad (Vorbelegung der Verzeichnisauswahl)
+LAST_SD_PATH_KEY = "library/last_sd_path"
 
 
 class MainWindow(QMainWindow):
@@ -211,6 +216,17 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        action_show_all_mp3 = menu.addAction("Alle MP3 Dateien anzeigen")
+        action_show_all_mp3.setCheckable(True)
+        action_show_all_mp3.setChecked(self._show_all_mp3_enabled())
+        action_show_all_mp3.setToolTip(
+            "Zeigt in den Ordnern auch MP3s, die nicht dem TonUINO-Schema (001.mp3, ...) "
+            "entsprechen. Sie lassen sich abspielen, löschen und in ihren Tags bearbeiten, aber nicht umsortieren."
+        )
+        action_show_all_mp3.toggled.connect(self._on_show_all_mp3_toggled)
+
+        menu.addSeparator()
+
         theme_menu = menu.addMenu("Design")
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
@@ -241,6 +257,21 @@ class MainWindow(QMainWindow):
             lambda: self.rfid_panel.set_reader_mode(RfidPanel.READER_MODE_TONUINO)
         )
         reader_group.addAction(action_reader_tonuino)
+
+    @staticmethod
+    def _show_all_mp3_enabled() -> bool:
+        return QSettings().value(SHOW_ALL_MP3_KEY, False, type=bool)
+
+    def _on_show_all_mp3_toggled(self, checked: bool):
+        """Speichert die Einstellung und wendet sie auf die geoeffnete Karte an"""
+        QSettings().setValue(SHOW_ALL_MP3_KEY, checked)
+        if not self.sd_card:
+            return
+        # Dateien freigeben: die Liste wird neu aufgebaut und der Player gestoppt
+        self._release_files()
+        self.sd_card.set_show_all_mp3(checked)
+        if self.current_folder and not self._is_special_folder(self.current_folder):
+            self._show_folder(self.current_folder)
 
     def _on_theme_selected(self, key: str):
         """Speichert das gewaehlte Design. Icons und Farben werden beim Start
@@ -581,16 +612,21 @@ class MainWindow(QMainWindow):
 
     def _open_sd_card(self):
         """Oeffnet eine SD-Karte"""
+        # Zuletzt geoeffneten Pfad vorbelegen, solange es ihn noch gibt (die Karte
+        # kann inzwischen abgezogen sein)
+        last_path = QSettings().value(LAST_SD_PATH_KEY, "", type=str)
+        start_dir = last_path if last_path and os.path.isdir(last_path) else ""
         path = QFileDialog.getExistingDirectory(
             self,
             "SD-Karte auswählen",
-            "",
+            start_dir,
             QFileDialog.Option.ShowDirsOnly
         )
-        
+
         if not path:
             return
-        
+        QSettings().setValue(LAST_SD_PATH_KEY, path)
+
         # Ansicht der bisherigen Karte (Trackliste, Cover, Player) verwerfen
         if self._add_tracks_worker is not None and self._add_tracks_worker.isRunning():
             self._add_tracks_worker.cancel()
@@ -604,7 +640,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.welcome_widget)
         self._update_folder_action_buttons()
 
-        self.sd_card = SDCard(path)
+        self.sd_card = SDCard(path, show_all_mp3=self._show_all_mp3_enabled())
         self._folder_name_cache.clear()
         self.rfid_panel.refresh()
 
@@ -963,9 +999,24 @@ class MainWindow(QMainWindow):
 
         self.track_list.blockSignals(True)
         self.track_list.clear()
-        for track in folder.tracks:
+        for track in folder.all_tracks:
             item = QTreeWidgetItem([track.number_label, track.title_label, track.album])
             item.setData(0, Qt.ItemDataRole.UserRole, track)
+            if track.off_schema:
+                # Blassgelb hinterlegt, die Schrift bleibt wie bei normalen Eintraegen
+                for column in range(4):
+                    item.setBackground(column, QBrush(QColor(theme.EXTRA_ROW_BG)))
+                # Gelbes Warnsymbol hinter dem Album; der Tooltip nennt den Dateinamen
+                item.setIcon(3, self._row_icon("warning"))
+                # In der Mehrfachauswahl nicht markierbar (der Kreis-Platz bleibt
+                # reserviert, damit die Spalten buendig sind)
+                item.setData(0, ROW_NOT_CHECKABLE_ROLE, True)
+                item.setToolTip(
+                    3,
+                    "Entspricht nicht dem TonUINO-Namensschema (NNN.mp3).\n"
+                    "Abspielen, Löschen und Tags bearbeiten sind möglich, Umsortieren nicht.\n"
+                    f"Dateiname im Dateisystem: {track.filename}",
+                )
             # ItemIsUserCheckable ist standardmaessig gesetzt und wuerde den Kreis
             # selbst umschalten - dann wuerde _on_track_clicked ihn gleich wieder
             # zuruecksetzen. Das Umschalten uebernimmt deshalb allein
@@ -983,7 +1034,7 @@ class MainWindow(QMainWindow):
 
         # Tags, Dauer und Cover im Hintergrund lesen (je Datei einmal)
         self._track_meta_worker = TrackMetaWorker(
-            self._track_meta_generation, list(folder.tracks), self.metadata_manager
+            self._track_meta_generation, list(folder.all_tracks), self.metadata_manager
         )
         self._track_meta_worker.track_loaded.connect(self._on_track_meta_loaded)
         self._track_meta_worker.completed.connect(self._on_track_meta_completed)
@@ -1020,7 +1071,7 @@ class MainWindow(QMainWindow):
         self._track_meta_total += metadata.duration or 0.0
 
         folder = self.current_folder
-        if folder is None or folder.is_special:
+        if folder is None or folder.is_special or track.off_schema:
             return
         # Tracks treffen der Reihe nach ein: der erste mit Album-Tag benennt den Ordner
         # (ein manuell vergebener Name steht im ersten Track und geht vor)
@@ -1039,7 +1090,7 @@ class MainWindow(QMainWindow):
     def _update_folder_meta(self, folder: Folder):
         """Infozeile unter dem Ordnernamen: Anzahl der Tracks und Gesamtdauer
         (die Dauer kommt, sobald die Metadaten gelesen sind)"""
-        count = len(folder.tracks)
+        count = len(folder.all_tracks)
         total = self._track_meta_total
         parts = [f"{count} Track" if count == 1 else f"{count} Tracks"]
         if total >= 1:
@@ -1582,8 +1633,11 @@ class MainWindow(QMainWindow):
             self.btn_move_track_down.setToolTip("Track nach unten verschieben")
 
         self.btn_multi_select.setEnabled(editable)
-        self.btn_move_track_up.setEnabled(has_target and editable)
-        self.btn_move_track_down.setEnabled(has_target and editable)
+        # Nicht-Schema-MP3s lassen sich loeschen, aber nicht verschieben (ihre
+        # Position ist nicht Teil der Tonuino-Nummerierung)
+        movable = has_target and not any(t.off_schema for t in self._get_selected_tracks())
+        self.btn_move_track_up.setEnabled(movable and editable)
+        self.btn_move_track_down.setEnabled(movable and editable)
         self.btn_delete_tracks.setEnabled(has_target and editable)
         # Ist noch nichts geladen, kann Play den ausgewaehlten Track starten
         self.player_bar.set_idle_playable(bool(self._get_selected_tracks()))
@@ -1655,7 +1709,7 @@ class MainWindow(QMainWindow):
         if track and self._play_icon_rect(item).contains(self.track_list.last_press_pos):
             self.player_bar.toggle_track(track.filepath, track.display_name)
             return
-        if not self._multi_select_mode:
+        if not self._multi_select_mode or (track and track.off_schema):
             return
         checked = item.checkState(0) == Qt.CheckState.Checked
         item.setCheckState(0, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
@@ -1676,7 +1730,7 @@ class MainWindow(QMainWindow):
     def _update_player_navigation(self):
         """Zurueck/Weiter im Player nur aktivieren, wenn es relativ zum geladenen
         Track in dieser Richtung noch einen Track im Ordner gibt (kein Wrap-around)"""
-        tracks = self.current_folder.tracks if self.current_folder else []
+        tracks = self.current_folder.all_tracks if self.current_folder else []
         current_path = self.player_bar.current_path
         index = next((i for i, t in enumerate(tracks) if t.filepath == current_path), None)
         if index is None:
@@ -1704,6 +1758,8 @@ class MainWindow(QMainWindow):
                 pixmap = QPixmap(18, 18)
                 pixmap.fill(Qt.GlobalColor.transparent)
                 self._row_icons[kind] = QIcon(pixmap)
+            elif kind == "warning":
+                self._row_icons[kind] = icon_from_glyph("", color=theme.YELLOW, size=18)
             else:
                 self._row_icons[kind] = icon_from_glyph(glyphs[kind], color=theme.BLUE, size=18)
         return self._row_icons[kind]
@@ -1737,10 +1793,10 @@ class MainWindow(QMainWindow):
     def _play_relative_track(self, delta: int):
         """Spielt den vorherigen/naechsten Track relativ zum aktuell im Player
         geladenen Track (kein Wrap-around am Anfang/Ende der Liste)"""
-        if not self.current_folder or not self.current_folder.tracks:
+        if not self.current_folder or not self.current_folder.all_tracks:
             return
 
-        tracks = self.current_folder.tracks
+        tracks = self.current_folder.all_tracks
         current_path = self.player_bar.current_path
         current_index = next(
             (i for i, t in enumerate(tracks) if t.filepath == current_path), None
@@ -1801,7 +1857,7 @@ class MainWindow(QMainWindow):
             return
 
         selected = self._get_selected_tracks()
-        if not selected:
+        if not selected or any(t.off_schema for t in selected):
             return
 
         new_order, moved_rows = reorder_with_selection(

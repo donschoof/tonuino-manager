@@ -30,6 +30,9 @@ class Track:
     # Nummer so, wie sie im Dateinamen steht (z.B. "0007" in den Systemordnern);
     # leer bei normalen Ordnern, dort gilt der dreistellige Index
     number: str = ""
+    # True fuer MP3s, die nicht dem Tonuino-Schema (NNN.mp3) entsprechen: sie
+    # lassen sich abspielen, loeschen und taggen, werden aber nie umbenannt
+    off_schema: bool = False
 
     @property
     def number_label(self) -> str:
@@ -57,6 +60,10 @@ class Folder:
     index: Optional[int]
     path: str
     tracks: List[Track] = field(default_factory=list)
+    # Zusaetzliche MP3s ausserhalb des Schemas (nur mit "Alle MP3 Dateien
+    # anzeigen"); sie zaehlen nicht zu tracks, damit Umnummerieren, Loeschen
+    # und Tonuino-Zaehlung sie nie erfassen
+    extra_tracks: List[Track] = field(default_factory=list)
     cover_path: str = ""
     name: Optional[str] = None
     is_special: bool = False
@@ -64,6 +71,12 @@ class Folder:
     @property
     def track_count(self) -> int:
         return len(self.tracks)
+
+    @property
+    def all_tracks(self) -> List[Track]:
+        """Alle anzuzeigenden Tracks: erst die Tonuino-Tracks, dann die
+        zusaetzlichen MP3s ausserhalb des Schemas"""
+        return self.tracks + self.extra_tracks
 
 
 @dataclass
@@ -87,8 +100,9 @@ class SDCard:
     LEADING_DIGITS = re.compile(r'^(\d+)')
     SPECIAL_FOLDER_NAMES = ("mp3", "advert")
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, show_all_mp3: bool = False):
         self.path = Path(path)
+        self.show_all_mp3 = show_all_mp3
         self.folders: Dict[int, Folder] = {}
         self.special_folders: Dict[str, Folder] = {}
         self.is_valid_tonuino = False
@@ -162,9 +176,20 @@ class SDCard:
         Luecken und teils Buchstaben im Namen (z.B. 0007_Intro.mp3). Fuehrende Ziffern
         ergeben die Nummer, Dateien ohne Ziffern stehen am Ende. Die Ordner werden
         nur angezeigt und abgespielt, nie umbenannt."""
+        folder.tracks = self._free_form_tracks(Path(folder.path))
+
+    def _free_form_tracks(self, folder_path: Path, skip_schema: bool = False,
+                          off_schema: bool = False) -> List[Track]:
+        """Liest MP3-Dateien beliebiger Namen ein (Sortierung nach fuehrenden
+        Ziffern, Dateien ohne Ziffern am Ende). skip_schema laesst Dateien
+        aus, die dem Tonuino-Schema NNN.mp3 entsprechen und blendet dann auch
+        versteckte Dateien (z.B. .tmp_001.mp3) aus; AppleDouble-
+        Schattendateien zaehlen nie."""
         tracks = []
-        for item in Path(folder.path).iterdir():
+        for item in folder_path.iterdir():
             if not item.is_file() or item.suffix.lower() != ".mp3" or self._is_appledouble(item.name):
+                continue
+            if skip_schema and (self.TRACK_PATTERN.match(item.name) or item.name.startswith(".")):
                 continue
             match = self.LEADING_DIGITS.match(item.name)
             tracks.append(Track(
@@ -172,9 +197,25 @@ class SDCard:
                 filename=item.name,
                 filepath=str(item),
                 number=match.group(1) if match else "",
+                off_schema=off_schema,
             ))
         tracks.sort(key=lambda t: (t.index == 0 and not t.number, t.index, t.filename.lower()))
-        folder.tracks = tracks
+        return tracks
+
+    def _scan_extra_tracks(self, folder: Folder):
+        """Merkt sich die MP3s eines Ordners 01-99, die nicht dem Schema
+        NNN.mp3 entsprechen - nur wenn 'Alle MP3 Dateien anzeigen' aktiv ist"""
+        folder.extra_tracks = (
+            self._free_form_tracks(Path(folder.path), skip_schema=True, off_schema=True)
+            if self.show_all_mp3 else []
+        )
+
+    def set_show_all_mp3(self, enabled: bool):
+        """Schaltet die Anzeige der Nicht-Schema-MP3s um und aktualisiert die
+        Ordner, ohne die Tonuino-Tracks neu einzulesen"""
+        self.show_all_mp3 = enabled
+        for folder in self.folders.values():
+            self._scan_extra_tracks(folder)
 
     def _scan_tracks(self, folder: Folder):
         """Scansi alle Tracks in einem Ordner"""
@@ -202,9 +243,10 @@ class SDCard:
             )
             
             tracks.append(track)
-        
+
         folder.tracks = tracks
-    
+        self._scan_extra_tracks(folder)
+
     def _find_folder_cover(self, folder: Folder):
         """Sucht nach einem Cover-Bild im Ordner"""
         cover_names = ['cover.jpg', 'cover.png', 'folder.jpg', 'folder.png', 'front.jpg']
@@ -268,6 +310,8 @@ class SDCard:
         for track in tracks_to_delete:
             Path(track.filepath).unlink(missing_ok=True)
 
+        # Zusaetzliche MP3s (ausserhalb des Schemas) verschwinden nur aus der Anzeige
+        folder.extra_tracks = [t for t in folder.extra_tracks if t.filepath not in delete_paths]
         remaining = [t for t in folder.tracks if t.filepath not in delete_paths]
         self.close_track_gaps(folder, remaining)
 
