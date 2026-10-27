@@ -43,6 +43,7 @@ DARK = {
     "MENU_BG": "#2b2c3f",
     "HOVER_MID": "#3b3d52",
     "HOVER_STRONG": "#4a4c63",
+    "EXTRA_ROW_BG": "#4f4724",
 }
 
 LIGHT = {
@@ -76,6 +77,7 @@ LIGHT = {
     "MENU_BG": "#ffffff",
     "HOVER_MID": "#d5dae7",
     "HOVER_STRONG": "#c2c9db",
+    "EXTRA_ROW_BG": "#fff3c4",
 }
 
 THEMES = {"dark": DARK, "light": LIGHT}
