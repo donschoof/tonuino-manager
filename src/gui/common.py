@@ -73,7 +73,7 @@ def icon_from_glyph(glyph: str, color: str = theme.BASE, size: int = 16) -> QIco
     pixmap.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pixmap)
-    font = QFont("Material Icons")
+    font = QFont("Material Symbols Outlined")
     font.setPointSize(int(size * 0.65))
     painter.setFont(font)
     painter.setPen(QColor(color))
