@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
 from gui import theme
 
 # Material-Icons-Codepoints (gebuendelte Schriftart, siehe main.py)
-_GLYPH_EDIT = ""   # edit
+_GLYPH_EDIT = ""   # edit
 _GLYPH_IMAGE = ""  # image (Platzhalter ohne Cover)
 
 
@@ -114,8 +114,8 @@ class CoverEditWidget(QWidget):
 
     @staticmethod
     def _draw_glyph(painter: QPainter, glyph: str, pixel_size: float, color: QColor, rect: QRectF, y_offset: float):
-        """Zeichnet ein Material-Icons-Glyph mittig, um y_offset (Anteil der Hoehe) verschoben"""
-        font = QFont("Material Icons")
+        """Zeichnet ein Material-Symbols-Glyph mittig, um y_offset (Anteil der Hoehe) verschoben"""
+        font = QFont("Material Symbols Outlined")
         font.setPixelSize(max(8, int(pixel_size)))
         painter.setFont(font)
         painter.setPen(color)

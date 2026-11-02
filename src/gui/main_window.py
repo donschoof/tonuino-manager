@@ -458,7 +458,7 @@ class MainWindow(QMainWindow):
         self.folder_title_edit.editingFinished.connect(self._finish_folder_title_edit)
         self.folder_title_edit.cancelled.connect(self._cancel_folder_title_edit)
         confirm_action_icon = self.folder_title_edit.addAction(
-            icon_from_glyph("", color=theme.GREEN, size=22),  # Check
+            icon_from_glyph("", color=theme.GREEN, size=22),  # Check
             QLineEdit.ActionPosition.TrailingPosition,
         )
         confirm_action_icon.setToolTip("Name übernehmen")
@@ -468,7 +468,7 @@ class MainWindow(QMainWindow):
         self.btn_edit_folder_title.setObjectName("inlineEditIcon")
         self.btn_edit_folder_title.setAutoRaise(True)
         self.btn_edit_folder_title.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=32))  # Edit
+        self.btn_edit_folder_title.setIcon(icon_from_glyph("", color=theme.OVERLAY0, size=32))  # Edit
         self.btn_edit_folder_title.setIconSize(QSize(32, 32))
         self.btn_edit_folder_title.setToolTip(
             "Ordner umbenennen (der Name wird in die Tags der Tracks geschrieben)"
@@ -516,7 +516,7 @@ class MainWindow(QMainWindow):
 
         btn_delete_folder = QPushButton(" Ordner löschen")
         btn_delete_folder.setObjectName("softDangerButton")
-        btn_delete_folder.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
+        btn_delete_folder.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
         btn_delete_folder.setFixedHeight(38)
         btn_delete_folder.setMinimumWidth(170)
         btn_delete_folder.clicked.connect(self._delete_folder)
@@ -563,7 +563,7 @@ class MainWindow(QMainWindow):
 
         self.btn_delete_tracks = QPushButton(" Tracks löschen")
         self.btn_delete_tracks.setObjectName("softDangerButton")
-        self.btn_delete_tracks.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
+        self.btn_delete_tracks.setIcon(icon_with_hover("", theme.RED, theme.RED))  # Delete
         self.btn_delete_tracks.setEnabled(False)
         self.btn_delete_tracks.clicked.connect(self._delete_selected_tracks)
         track_header_layout.addWidget(self.btn_delete_tracks)
@@ -1759,7 +1759,7 @@ class MainWindow(QMainWindow):
                 pixmap.fill(Qt.GlobalColor.transparent)
                 self._row_icons[kind] = QIcon(pixmap)
             elif kind == "warning":
-                self._row_icons[kind] = icon_from_glyph("", color=theme.YELLOW, size=18)
+                self._row_icons[kind] = icon_from_glyph("", color=theme.YELLOW, size=18)
             else:
                 self._row_icons[kind] = icon_from_glyph(glyphs[kind], color=theme.BLUE, size=18)
         return self._row_icons[kind]
