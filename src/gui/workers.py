@@ -78,7 +78,8 @@ class TrackAddWorker(QThread):
             self.progress.emit(i, len(self.filepaths), os.path.basename(filepath))
 
             next_number = 1
-            while next_number in self._used_numbers:
+            on_disk = SDCard.track_numbers_on_disk(Path(self.folder.path))
+            while next_number in self._used_numbers or next_number in on_disk:
                 next_number += 1
             if next_number > MAX_TRACKS_PER_FOLDER:
                 break

@@ -9,7 +9,7 @@ import shutil
 import stat
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 
 
 # Maximale Anzahl Tracks pro Ordner (TonUINO adressiert Tracks mit einem Byte)
@@ -96,7 +96,8 @@ class SDCard:
     """Repraesentiert eine Tonuio SD-Karte"""
 
     FOLDER_PATTERN = re.compile(r'^(\d{2})$')
-    TRACK_PATTERN = re.compile(r'^(\d{3})\.mp3$', re.IGNORECASE)
+    # Der DFPlayer liest nur die ersten drei Ziffern, Text danach ignoriert er (001_Titel.mp3)
+    TRACK_PATTERN = re.compile(r'^(\d{3})(\D.*)?\.mp3$', re.IGNORECASE)
     LEADING_DIGITS = re.compile(r'^(\d+)')
     SPECIAL_FOLDER_NAMES = ("mp3", "advert")
 
@@ -178,18 +179,18 @@ class SDCard:
         nur angezeigt und abgespielt, nie umbenannt."""
         folder.tracks = self._free_form_tracks(Path(folder.path))
 
-    def _free_form_tracks(self, folder_path: Path, skip_schema: bool = False,
+    def _free_form_tracks(self, folder_path: Path, skip_names: Optional[Set[str]] = None,
                           off_schema: bool = False) -> List[Track]:
         """Liest MP3-Dateien beliebiger Namen ein (Sortierung nach fuehrenden
-        Ziffern, Dateien ohne Ziffern am Ende). skip_schema laesst Dateien
-        aus, die dem Tonuino-Schema NNN.mp3 entsprechen und blendet dann auch
+        Ziffern, Dateien ohne Ziffern am Ende). skip_names laesst die schon
+        als Tonuino-Tracks erkannten Dateien aus und blendet dann auch
         versteckte Dateien (z.B. .tmp_001.mp3) aus; AppleDouble-
         Schattendateien zaehlen nie."""
         tracks = []
         for item in folder_path.iterdir():
             if not item.is_file() or item.suffix.lower() != ".mp3" or self._is_appledouble(item.name):
                 continue
-            if skip_schema and (self.TRACK_PATTERN.match(item.name) or item.name.startswith(".")):
+            if skip_names is not None and (item.name in skip_names or item.name.startswith(".")):
                 continue
             match = self.LEADING_DIGITS.match(item.name)
             tracks.append(Track(
@@ -203,10 +204,12 @@ class SDCard:
         return tracks
 
     def _scan_extra_tracks(self, folder: Folder):
-        """Merkt sich die MP3s eines Ordners 01-99, die nicht dem Schema
-        NNN.mp3 entsprechen - nur wenn 'Alle MP3 Dateien anzeigen' aktiv ist"""
+        """Merkt sich die MP3s eines Ordners 01-99, die kein Tonuino-Track sind,
+        auch zweite Dateien zu einer Nummer - nur wenn 'Alle MP3 Dateien anzeigen'
+        aktiv ist"""
         folder.extra_tracks = (
-            self._free_form_tracks(Path(folder.path), skip_schema=True, off_schema=True)
+            self._free_form_tracks(Path(folder.path), skip_names={t.filename for t in folder.tracks},
+                                   off_schema=True)
             if self.show_all_mp3 else []
         )
 
@@ -217,6 +220,12 @@ class SDCard:
         for folder in self.folders.values():
             self._scan_extra_tracks(folder)
 
+    @classmethod
+    def track_numbers_on_disk(cls, folder_path: Path) -> Set[int]:
+        """Tracknummern, die im Ordner vergeben sind, auch als 001_Titel.mp3"""
+        matches = (cls.TRACK_PATTERN.match(item.name) for item in folder_path.iterdir() if item.is_file())
+        return {int(match.group(1)) for match in matches if match}
+
     def _scan_tracks(self, folder: Folder):
         """Scansi alle Tracks in einem Ordner"""
         if folder.is_special:
@@ -224,7 +233,7 @@ class SDCard:
             return
 
         folder_path = Path(folder.path)
-        tracks = []
+        tracks = {}
         
         for item in sorted(folder_path.iterdir()):
             if not item.is_file():
@@ -235,6 +244,9 @@ class SDCard:
                 continue
             
             track_index = int(match.group(1))
+            # Pro Nummer ein Track; 001.mp3 hat Vorrang vor 001_Titel.mp3
+            if track_index in tracks and match.group(2):
+                continue
             
             track = Track(
                 index=track_index,
@@ -242,9 +254,9 @@ class SDCard:
                 filepath=str(item)
             )
             
-            tracks.append(track)
+            tracks[track_index] = track
 
-        folder.tracks = tracks
+        folder.tracks = [tracks[index] for index in sorted(tracks)]
         self._scan_extra_tracks(folder)
 
     def _find_folder_cover(self, folder: Folder):
