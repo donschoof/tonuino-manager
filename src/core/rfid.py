@@ -41,14 +41,13 @@ class TonuinoCardData:
 
 
 # Wiedergabemodi wie von der original TonUINO-Firmware erwartet (chip_card.hpp:
-# pmode_t) - von beiden Programmierwegen (ACR122U-Leser und TonUINO-seriell)
-# gemeinsam genutzt, damit sie nicht auseinanderlaufen.
+# pmode_t) - alle WRITECARD-Modi ausser Admin (der einen eigenen Button hat),
+# von beiden Programmierwegen (ACR122U-Leser und TonUINO-seriell) gemeinsam
+# genutzt, damit sie nicht auseinanderlaufen.
 PLAYBACK_MODES = [
-    ("Hörspiel (zufällige Wiedergabe, kein Fortschritt)", pmodes.PMODE_HOERSPIEL),
-    ("Album (alle Tracks der Reihe nach)", pmodes.PMODE_ALBUM),
-    ("Party (alle Tracks in zufälliger Reihenfolge)", pmodes.PMODE_PARTY),
-    ("Einzelner Track", pmodes.PMODE_EINZEL),
-    ("Hörbuch (Fortschritt wird gespeichert)", pmodes.PMODE_HOERBUCH),
+    (info.label, info.value)
+    for info in TonuinoSerial.WRITECARD_MODES.values()
+    if info.value != TonuinoSerial.PMODE_ADMIN_CARD
 ]
 
 
@@ -585,9 +584,11 @@ class RFIDReader:
         special2: int = 0,
         key: List[int] = None
     ) -> bool:
-        """Schreibt eine Tonuino-Kartenkonfiguration fuer einen Ordner, passend zum erkannten Kartentyp"""
-        if folder_index < 1 or folder_index > 99:
-            raise ValueError("Folder-Index muss zwischen 1 und 99 liegen")
+        """Schreibt eine Tonuino-Kartenkonfiguration fuer einen Ordner, passend zum erkannten
+        Kartentyp. Fuer Modi ohne Ordnerbezug (z.B. "Wiederhole", "Bluetooth an/aus" -
+        siehe TonuinoSerial.WRITECARD_MODES, Gruppe mode_only) wird folder_index=0 erwartet."""
+        if folder_index < 0 or folder_index > 99:
+            raise ValueError("Folder-Index muss zwischen 0 und 99 liegen")
 
         if mode < 1 or mode > 255:
             raise ValueError("Mode muss zwischen 1 und 255 liegen")
