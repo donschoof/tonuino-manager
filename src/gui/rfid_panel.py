@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from core.sd_card import Folder
+from core.sd_card import Folder, MAX_TRACKS_PER_FOLDER
 from core import pmodes
 from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES, describe_card
 from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
@@ -50,6 +50,10 @@ class RfidPanel(QFrame):
         self.rfid_reader = RFIDReader()
         self.tonuino_serial = TonuinoSerial()
         self._reader_mode = self.READER_MODE_ACR122U
+        # Standalone-Modus (Menue Einstellungen -> RFID-Leser): Karte wird mit einer
+        # manuell eingegebenen Ordnernummer programmiert, ohne dass dafuer eine
+        # SD-Karte geladen bzw. ein Ordner ausgewaehlt sein muss.
+        self._standalone_mode = False
         self._tonuino_worker: Optional[TonuinoCardWorker] = None
         self._tonuino_connect_worker: Optional[TonuinoConnectWorker] = None
         self._last_rfid_status: Optional[RfidStatus] = None
@@ -251,6 +255,27 @@ class RfidPanel(QFrame):
             self._refresh_tonuino_ports()
         self._update_program_buttons()
 
+    def set_standalone_mode(self, enabled: bool):
+        """Schaltet den Standalone-Modus um - ausgewaehlt ueber das Menue
+        Einstellungen (RFID-Leser). Im Standalone-Modus wird die Ordnernummer
+        beim Programmieren manuell abgefragt, statt sie vom ausgewaehlten
+        Ordner der geladenen SD-Karte zu uebernehmen."""
+        self._standalone_mode = enabled
+        self._update_program_buttons()
+
+    def _ask_folder_index(self) -> Optional[int]:
+        """Fragt im Standalone-Modus die Ordnernummer ab, fuer die die Karte
+        programmiert werden soll. Gibt None zurueck, wenn abgebrochen wurde."""
+        folder_index, ok = QInputDialog.getInt(
+            self,
+            "Ordnernummer",
+            "Für welche Ordnernummer soll die Karte programmiert werden?",
+            1, 1, 99
+        )
+        if not ok:
+            return None
+        return folder_index
+
     def _refresh_tonuino_ports(self):
         """Aktualisiert die Liste der verfuegbaren COM-Ports fuer den TonUINO"""
         self.tonuino_port_combo.clear()
@@ -327,8 +352,10 @@ class RfidPanel(QFrame):
         self.btn_program_admin.setEnabled(self._rfid_card_present)
         self.btn_program_card.setEnabled(
             self._rfid_card_present
-            and self.current_folder is not None
-            and not self._is_special_folder(self.current_folder)
+            and (
+                self._standalone_mode
+                or (self.current_folder is not None and not self._is_special_folder(self.current_folder))
+            )
         )
         self._set_erase_icon_state(self._rfid_card_present and self._rfid_card_programmed)
 
@@ -405,13 +432,23 @@ class RfidPanel(QFrame):
             self._program_rfid_card_via_serial()
             return
 
-        if not self.current_folder or self._is_special_folder(self.current_folder):
-            QMessageBox.warning(
-                self,
-                "Kein Ordner",
-                "Bitte wähle zuerst einen Ordner aus."
-            )
-            return
+        track_count = MAX_TRACKS_PER_FOLDER
+        if self._standalone_mode:
+            folder_index = self._ask_folder_index()
+            if folder_index is None:
+                return
+            folder_label = f"{folder_index:02d}"
+        else:
+            if not self.current_folder or self._is_special_folder(self.current_folder):
+                QMessageBox.warning(
+                    self,
+                    "Kein Ordner",
+                    "Bitte wähle zuerst einen Ordner aus."
+                )
+                return
+            folder_index = self.current_folder.index
+            folder_label = self._resolve_folder_name(self.current_folder)
+            track_count = max(self.current_folder.track_count, 1)
 
         if not self.rfid_reader.is_card_present():
             QMessageBox.information(
@@ -425,7 +462,7 @@ class RfidPanel(QFrame):
         mode_label, ok = QInputDialog.getItem(
             self,
             "Wiedergabemodus",
-            f"Modus für Ordner '{self._resolve_folder_name(self.current_folder)}':",
+            f"Modus für Ordner '{folder_label}':",
             mode_labels,
             1,  # Standard: Album
             False
@@ -437,7 +474,6 @@ class RfidPanel(QFrame):
         special = 0
 
         if mode == pmodes.PMODE_EINZEL:
-            track_count = max(self.current_folder.track_count, 1)
             special, ok = QInputDialog.getInt(
                 self,
                 "Track auswählen",
@@ -450,7 +486,7 @@ class RfidPanel(QFrame):
         confirmed = confirm_action(
             self,
             "Karte programmieren",
-            f"Soll die Karte für Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
+            f"Soll die Karte für Ordner \'{folder_label}\' "
             f"programmiert werden?",
             default_no=False
         )
@@ -458,7 +494,7 @@ class RfidPanel(QFrame):
         if confirmed:
             self._run_card_action(
                 lambda: self.rfid_reader.write_tonuino_card(
-                    self.current_folder.index, mode=mode, special=special
+                    folder_index, mode=mode, special=special
                 ),
                 success_status="Karte erfolgreich programmiert!",
                 success_text="Die Karte wurde erfolgreich programmiert!",
@@ -527,22 +563,31 @@ class RfidPanel(QFrame):
         info = TonuinoSerial.WRITECARD_MODES[mode]
 
         folder = None
+        folder_label = None
         special = None
         special2 = None
+        track_count = MAX_TRACKS_PER_FOLDER
 
         if info.group != TonuinoSerial.GROUP_MODE_ONLY:
-            if not self.current_folder or self._is_special_folder(self.current_folder):
-                QMessageBox.warning(
-                    self,
-                    "Kein Ordner",
-                    "Bitte wähle zuerst einen Ordner aus."
-                )
-                return
-            folder = self.current_folder.index
+            if self._standalone_mode:
+                folder = self._ask_folder_index()
+                if folder is None:
+                    return
+                folder_label = f"{folder:02d}"
+            else:
+                if not self.current_folder or self._is_special_folder(self.current_folder):
+                    QMessageBox.warning(
+                        self,
+                        "Kein Ordner",
+                        "Bitte wähle zuerst einen Ordner aus."
+                    )
+                    return
+                folder = self.current_folder.index
+                folder_label = self._resolve_folder_name(self.current_folder)
+                track_count = max(self.current_folder.track_count, 1)
 
         if info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL:
             if mode == TonuinoSerial.PMODE_EINZEL:
-                track_count = max(self.current_folder.track_count, 1)
                 special, ok = QInputDialog.getInt(
                     self, "Track auswählen", "Welcher Track soll gespielt werden?",
                     1, 1, track_count
@@ -571,7 +616,6 @@ class RfidPanel(QFrame):
                     return
                 special, special2 = int(special_label), int(special2_label)
             else:  # von-bis-Modi (Hörspiel/Album/Party/Hörbuch von-bis)
-                track_count = max(self.current_folder.track_count, 1)
                 special, ok = QInputDialog.getInt(
                     self, "Track-Bereich", "Von Track:", 1, 1, track_count
                 )
@@ -586,7 +630,7 @@ class RfidPanel(QFrame):
         if folder is not None:
             confirm_text = (
                 f"Lege die Karte auf den TonUINO-eigenen Leser. Soll sie dann für "
-                f"Ordner \'{self._resolve_folder_name(self.current_folder)}\' "
+                f"Ordner \'{folder_label}\' "
                 f"programmiert werden?"
                 f"{TONUINO_IDLE_HINT}"
             )
