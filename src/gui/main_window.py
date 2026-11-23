@@ -258,6 +258,19 @@ class MainWindow(QMainWindow):
         )
         reader_group.addAction(action_reader_tonuino)
 
+        reader_menu.addSeparator()
+
+        action_standalone = reader_menu.addAction("Standalone (Ordner manuell eingeben)")
+        action_standalone.setCheckable(True)
+        action_standalone.setToolTip(
+            "Fragt die Ordnernummer beim Programmieren manuell ab, statt sie vom "
+            "ausgewählten Ordner der geladenen SD-Karte zu übernehmen - so lässt sich "
+            "eine Karte auch ohne geladene SD-Karte programmieren."
+        )
+        action_standalone.toggled.connect(
+            lambda checked: self.rfid_panel.set_standalone_mode(checked)
+        )
+
     @staticmethod
     def _show_all_mp3_enabled() -> bool:
         return QSettings().value(SHOW_ALL_MP3_KEY, False, type=bool)

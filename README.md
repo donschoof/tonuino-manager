@@ -63,6 +63,8 @@ Den Programmierweg wählst du im Menü **Einstellungen** unter **RFID-Leser**:
 - **ACR122U** (Standard): USB-Reader, alle Funktionen inkl. Löschen einzelner Karten
 - **TonUINO (seriell)**: Karte wird über den per USB verbundenen TonUINO und dessen eigenen Leser geschrieben, kein extra Reader nötig. Voraussetzung ist [TonUINO-TNG](https://github.com/tonuino/TonUINO-TNG) mit `#define SerialInputAsCommand` (`src/constants.hpp`). Der TonUINO muss im Leerlauf oder pausiert sein, die Karte liegt auf seinem Leser. Löschen ist in diesem Modus nicht möglich.
 
+Im selben Menü lässt sich zusätzlich **Standalone (Ordner manuell eingeben)** aktivieren: dabei wird die Ordnernummer per Dialog abgefragt, statt sie vom ausgewählten Ordner der geladenen SD-Karte zu übernehmen. So lassen sich Ordnerkarten programmieren, ohne dass dafür eine SD-Karte geladen und ein Ordner ausgewählt sein muss - funktioniert mit beiden Programmierwegen.
+
 ## Entwicklung
 
 Python 3.10+ und ein venv (auf aktuellem Debian/Ubuntu ohnehin Pflicht, siehe [PEP 668](https://peps.python.org/pep-0668/)):
