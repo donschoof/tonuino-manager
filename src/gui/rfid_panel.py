@@ -3,7 +3,7 @@ RFID-Bereich der Sidebar: Reader-Status, Karten programmieren/loeschen -
 entweder ueber einen ACR122U-Leser oder seriell ueber den TonUINO selbst.
 """
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
@@ -14,7 +14,7 @@ from PyQt6.QtCore import Qt
 from core.sd_card import Folder, MAX_TRACKS_PER_FOLDER
 from core import pmodes
 from core.rfid import RFIDReader, RfidStatus, PLAYBACK_MODES, describe_card
-from core.tonuino_serial import TonuinoSerial, TonuinoSerialError
+from core.tonuino_serial import TonuinoSerial, TonuinoSerialError, WriteCardMode
 from gui.common import heading_font, confirm_action, icon_from_glyph, ClickableLabel
 from gui.workers import RfidPoller, TonuinoConnectWorker, TonuinoCardWorker
 from gui import theme
@@ -276,6 +276,82 @@ class RfidPanel(QFrame):
             return None
         return folder_index
 
+    def _resolve_card_params(
+        self, mode: int, info: WriteCardMode
+    ) -> Optional[Tuple[Optional[int], Optional[str], int, int]]:
+        """Fragt je nach Modus-Gruppe (siehe TonuinoSerial.WRITECARD_MODES) Ordnernummer,
+        Track oder Track-Bereich ab - gemeinsame Logik fuer beide Programmierwege (ACR122U
+        und TonUINO-seriell), damit sie nicht auseinanderlaufen. Gibt
+        (folder, folder_label, special, special2) zurueck; folder/folder_label bleiben None
+        fuer Modi ohne Ordnerbezug (z.B. "Wiederhole", "Bluetooth an/aus"). Gibt None zurueck,
+        wenn der Benutzer abgebrochen hat."""
+        folder = None
+        folder_label = None
+        special = 0
+        special2 = 0
+        track_count = MAX_TRACKS_PER_FOLDER
+
+        if info.group != TonuinoSerial.GROUP_MODE_ONLY:
+            if self._standalone_mode:
+                folder = self._ask_folder_index()
+                if folder is None:
+                    return None
+                folder_label = f"{folder:02d}"
+            else:
+                if not self.current_folder or self._is_special_folder(self.current_folder):
+                    QMessageBox.warning(
+                        self,
+                        "Kein Ordner",
+                        "Bitte wähle zuerst einen Ordner aus."
+                    )
+                    return None
+                folder = self.current_folder.index
+                folder_label = self._resolve_folder_name(self.current_folder)
+                track_count = max(self.current_folder.track_count, 1)
+
+        if info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL:
+            if mode == pmodes.PMODE_EINZEL:
+                special, ok = QInputDialog.getInt(
+                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
+                    1, 1, track_count
+                )
+            else:  # PMODE_HOERBUCH_1 ("Hörbuch einzel")
+                special, ok = QInputDialog.getInt(
+                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
+                    0, 0, 29
+                )
+            if not ok:
+                return None
+
+        elif info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL_SPECIAL2:
+            if mode == pmodes.PMODE_QUIZ_GAME:
+                special_label, ok = QInputDialog.getItem(
+                    self, "Quiz Spiel", "Anzahl Antwortmöglichkeiten:",
+                    ["0", "2", "4"], 1, False
+                )
+                if not ok:
+                    return None
+                special2_label, ok = QInputDialog.getItem(
+                    self, "Quiz Spiel", "Mit Wiederholung bei falscher Antwort:",
+                    ["0", "1"], 0, False
+                )
+                if not ok:
+                    return None
+                special, special2 = int(special_label), int(special2_label)
+            else:  # von-bis-Modi (Hörspiel/Album/Party/Hörbuch von-bis)
+                special, ok = QInputDialog.getInt(
+                    self, "Track-Bereich", "Von Track:", 1, 1, track_count
+                )
+                if not ok:
+                    return None
+                special2, ok = QInputDialog.getInt(
+                    self, "Track-Bereich", "Bis Track:", special, special, track_count
+                )
+                if not ok:
+                    return None
+
+        return folder, folder_label, special, special2
+
     def _refresh_tonuino_ports(self):
         """Aktualisiert die Liste der verfuegbaren COM-Ports fuer den TonUINO"""
         self.tonuino_port_combo.clear()
@@ -350,13 +426,11 @@ class RfidPanel(QFrame):
             return
 
         self.btn_program_admin.setEnabled(self._rfid_card_present)
-        self.btn_program_card.setEnabled(
-            self._rfid_card_present
-            and (
-                self._standalone_mode
-                or (self.current_folder is not None and not self._is_special_folder(self.current_folder))
-            )
-        )
+        # Ordnerunabhaengig: manche Modi (z.B. "Wiederhole", "Bluetooth an/aus")
+        # brauchen keinen Ordner - die Pruefung, ob fuer den gewaehlten Modus ein
+        # Ordner noetig ist, passiert erst in _program_rfid_card() nach der
+        # Modusauswahl (siehe _resolve_card_params()).
+        self.btn_program_card.setEnabled(self._rfid_card_present)
         self._set_erase_icon_state(self._rfid_card_present and self._rfid_card_programmed)
 
     def _update_card_status(self, present: bool):
@@ -400,15 +474,11 @@ class RfidPanel(QFrame):
         else:
             self._update_card_status(present=False)
 
+    # Alle Wiedergabemodi ausser Admin (der einen eigenen Button hat) - von beiden
+    # Programmierwegen (ACR122U und TonUINO-seriell) gemeinsam genutzt, siehe
+    # core.rfid.PLAYBACK_MODES.
     RFID_MODES = PLAYBACK_MODES
-
-    # WRITECARD-Modi fuer den TonUINO-seriell-Weg (siehe core.tonuino_serial) -
-    # alle 16 Firmware-Modi ausser Admin, der einen eigenen Button hat.
-    TONUINO_MODES = [
-        (info.label, info.value)
-        for info in TonuinoSerial.WRITECARD_MODES.values()
-        if info.value != TonuinoSerial.PMODE_ADMIN_CARD
-    ]
+    TONUINO_MODES = PLAYBACK_MODES
 
     def _run_card_action(self, action, success_status: str, success_text: str,
                          failure_text: str, error_prefix: str):
@@ -432,24 +502,6 @@ class RfidPanel(QFrame):
             self._program_rfid_card_via_serial()
             return
 
-        track_count = MAX_TRACKS_PER_FOLDER
-        if self._standalone_mode:
-            folder_index = self._ask_folder_index()
-            if folder_index is None:
-                return
-            folder_label = f"{folder_index:02d}"
-        else:
-            if not self.current_folder or self._is_special_folder(self.current_folder):
-                QMessageBox.warning(
-                    self,
-                    "Kein Ordner",
-                    "Bitte wähle zuerst einen Ordner aus."
-                )
-                return
-            folder_index = self.current_folder.index
-            folder_label = self._resolve_folder_name(self.current_folder)
-            track_count = max(self.current_folder.track_count, 1)
-
         if not self.rfid_reader.is_card_present():
             QMessageBox.information(
                 self,
@@ -462,7 +514,7 @@ class RfidPanel(QFrame):
         mode_label, ok = QInputDialog.getItem(
             self,
             "Wiedergabemodus",
-            f"Modus für Ordner '{folder_label}':",
+            "Modus:",
             mode_labels,
             1,  # Standard: Album
             False
@@ -471,30 +523,24 @@ class RfidPanel(QFrame):
             return
 
         mode = dict(self.RFID_MODES)[mode_label]
-        special = 0
+        info = TonuinoSerial.WRITECARD_MODES[mode]
 
-        if mode == pmodes.PMODE_EINZEL:
-            special, ok = QInputDialog.getInt(
-                self,
-                "Track auswählen",
-                "Welcher Track soll gespielt werden?",
-                1, 1, track_count
-            )
-            if not ok:
-                return
+        result = self._resolve_card_params(mode, info)
+        if result is None:
+            return
+        folder, folder_label, special, special2 = result
 
-        confirmed = confirm_action(
-            self,
-            "Karte programmieren",
-            f"Soll die Karte für Ordner \'{folder_label}\' "
-            f"programmiert werden?",
-            default_no=False
-        )
+        if folder_label is not None:
+            confirm_text = f"Soll die Karte für Ordner \'{folder_label}\' programmiert werden?"
+        else:
+            confirm_text = f"Soll die Karte als \'{mode_label}\'-Karte programmiert werden?"
+
+        confirmed = confirm_action(self, "Karte programmieren", confirm_text, default_no=False)
 
         if confirmed:
             self._run_card_action(
                 lambda: self.rfid_reader.write_tonuino_card(
-                    folder_index, mode=mode, special=special
+                    folder or 0, mode=mode, special=special, special2=special2
                 ),
                 success_status="Karte erfolgreich programmiert!",
                 success_text="Die Karte wurde erfolgreich programmiert!",
@@ -562,70 +608,10 @@ class RfidPanel(QFrame):
         mode = dict(self.TONUINO_MODES)[mode_label]
         info = TonuinoSerial.WRITECARD_MODES[mode]
 
-        folder = None
-        folder_label = None
-        special = None
-        special2 = None
-        track_count = MAX_TRACKS_PER_FOLDER
-
-        if info.group != TonuinoSerial.GROUP_MODE_ONLY:
-            if self._standalone_mode:
-                folder = self._ask_folder_index()
-                if folder is None:
-                    return
-                folder_label = f"{folder:02d}"
-            else:
-                if not self.current_folder or self._is_special_folder(self.current_folder):
-                    QMessageBox.warning(
-                        self,
-                        "Kein Ordner",
-                        "Bitte wähle zuerst einen Ordner aus."
-                    )
-                    return
-                folder = self.current_folder.index
-                folder_label = self._resolve_folder_name(self.current_folder)
-                track_count = max(self.current_folder.track_count, 1)
-
-        if info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL:
-            if mode == TonuinoSerial.PMODE_EINZEL:
-                special, ok = QInputDialog.getInt(
-                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
-                    1, 1, track_count
-                )
-            else:  # PMODE_HOERBUCH_1 ("Hörbuch einzel")
-                special, ok = QInputDialog.getInt(
-                    self, "Track auswählen", "Welcher Track soll gespielt werden?",
-                    0, 0, 29
-                )
-            if not ok:
-                return
-
-        elif info.group == TonuinoSerial.GROUP_MODE_FOLDER_SPECIAL_SPECIAL2:
-            if mode == TonuinoSerial.PMODE_QUIZ_GAME:
-                special_label, ok = QInputDialog.getItem(
-                    self, "Quiz Spiel", "Anzahl Antwortmöglichkeiten:",
-                    ["0", "2", "4"], 1, False
-                )
-                if not ok:
-                    return
-                special2_label, ok = QInputDialog.getItem(
-                    self, "Quiz Spiel", "Mit Wiederholung bei falscher Antwort:",
-                    ["0", "1"], 0, False
-                )
-                if not ok:
-                    return
-                special, special2 = int(special_label), int(special2_label)
-            else:  # von-bis-Modi (Hörspiel/Album/Party/Hörbuch von-bis)
-                special, ok = QInputDialog.getInt(
-                    self, "Track-Bereich", "Von Track:", 1, 1, track_count
-                )
-                if not ok:
-                    return
-                special2, ok = QInputDialog.getInt(
-                    self, "Track-Bereich", "Bis Track:", special, special, track_count
-                )
-                if not ok:
-                    return
+        result = self._resolve_card_params(mode, info)
+        if result is None:
+            return
+        folder, folder_label, special, special2 = result
 
         if folder is not None:
             confirm_text = (
